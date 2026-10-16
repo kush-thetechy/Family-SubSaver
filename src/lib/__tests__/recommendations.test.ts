@@ -1,0 +1,139 @@
+import { describe, it, expect } from "vitest";
+import { generateSavingsRecommendations } from "../recommendations";
+import { Subscription } from "@/types";
+
+describe("Savings Recommendations & Conservative Checks", () => {
+  it("flags duplicate Spotify subscriptions with potential savings based on verified catalog", () => {
+    const subs: Subscription[] = [
+      {
+        id: "sub-spotify-1",
+        household_id: "h-1",
+        service_name: "Spotify",
+        category: "music",
+        billing_cycle: "monthly",
+        amount_paise: 11900, // ₹119
+        payer_id: "user-1",
+        user_ids: ["user-1"],
+        is_active: true,
+        visibility: "full_details",
+        source: "manual",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: "sub-spotify-2",
+        household_id: "h-1",
+        service_name: "Spotify",
+        category: "music",
+        billing_cycle: "monthly",
+        amount_paise: 11900, // ₹119
+        payer_id: "user-2",
+        user_ids: ["user-2"],
+        is_active: true,
+        visibility: "full_details",
+        source: "manual",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+
+    const recs = generateSavingsRecommendations(subs);
+    expect(recs.length).toBeGreaterThan(0);
+
+    const spotifyRec = recs.find((r) => r.id === "rec-family-spotify");
+    expect(spotifyRec).toBeDefined();
+    // State must be potential_saving because family residency verification is required
+    expect(spotifyRec?.state).toBe("potential_saving");
+    // For 2 users, Spotify Duo is ₹149/mo (14900 paise). Current spend = ₹238 (23800 paise). Saving = ₹89 (8900 paise)
+    expect(spotifyRec?.potential_monthly_savings_paise).toBe(8900);
+    expect(spotifyRec?.assumptions).toContain(
+      "All members must meet the provider's residency policy (residing at the same physical household)."
+    );
+  });
+
+  it("produces compare_only with 0 definitive savings for services without verified catalog family tier", () => {
+    const subs: Subscription[] = [
+      {
+        id: "sub-custom-1",
+        household_id: "h-1",
+        service_name: "Niche Yoga App",
+        category: "fitness",
+        billing_cycle: "monthly",
+        amount_paise: 50000,
+        payer_id: "user-1",
+        user_ids: ["user-1"],
+        is_active: true,
+        visibility: "full_details",
+        source: "manual",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: "sub-custom-2",
+        household_id: "h-1",
+        service_name: "Niche Yoga App",
+        category: "fitness",
+        billing_cycle: "monthly",
+        amount_paise: 50000,
+        payer_id: "user-2",
+        user_ids: ["user-2"],
+        is_active: true,
+        visibility: "full_details",
+        source: "manual",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+
+    const recs = generateSavingsRecommendations(subs);
+    const yogaRec = recs.find((r) => r.category === "fitness");
+    expect(yogaRec).toBeDefined();
+    expect(yogaRec?.state).toBe("compare_only");
+    // Conservative rule: Do NOT invent a savings number when catalog or family eligibility is unknown!
+    expect(yogaRec?.potential_monthly_savings_paise).toBe(0);
+  });
+
+  it("treats multiple AI tools as compare_only with 0 savings", () => {
+    const subs: Subscription[] = [
+      {
+        id: "sub-gpt",
+        household_id: "h-1",
+        service_name: "ChatGPT Plus",
+        category: "ai",
+        billing_cycle: "monthly",
+        amount_paise: 199900,
+        payer_id: "user-1",
+        user_ids: ["user-1"],
+        is_active: true,
+        visibility: "full_details",
+        source: "manual",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: "sub-claude",
+        household_id: "h-1",
+        service_name: "Claude Pro",
+        category: "ai",
+        billing_cycle: "monthly",
+        amount_paise: 199900,
+        payer_id: "user-2",
+        user_ids: ["user-2"],
+        is_active: true,
+        visibility: "full_details",
+        source: "manual",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+
+    const recs = generateSavingsRecommendations(subs);
+    const aiRec = recs.find((r) => r.id === "rec-ai-overlap");
+    expect(aiRec).toBeDefined();
+    expect(aiRec?.state).toBe("compare_only");
+    expect(aiRec?.potential_monthly_savings_paise).toBe(0);
+    expect(aiRec?.assumptions[0]).toContain(
+      "AI tools have differing models, context lengths, and coding/writing capabilities"
+    );
+  });
+});
