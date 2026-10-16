@@ -1,10 +1,6 @@
 import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
-import {
-  createServerSession,
-  isSessionEncryptionConfigured,
-  setSessionCookie,
-} from "@/lib/connectors/server-token-store";
+import { isSessionEncryptionConfigured } from "@/lib/connectors/server-token-store";
 
 function getAppUrl(request: Request): string {
   return (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(
@@ -69,46 +65,3 @@ export async function GET(request: Request) {
   return response;
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json()) as {
-      action?: string;
-    };
-
-    // Instant Demo Connect (No Google credentials required)
-    if (body.action === "demo_connect") {
-      const demoEmail = "rahul.sharma@gmail.com";
-      const session = createServerSession({
-        userId: "user_rahul",
-        email: demoEmail,
-        isDemo: true,
-      });
-
-      const response = NextResponse.json({
-        success: true,
-        connected: true,
-        email: demoEmail,
-        isDemo: true,
-        message: `Connected to demo Gmail account (${demoEmail}).`,
-      });
-
-      setSessionCookie(response, session);
-      return response;
-    }
-
-    // Explicitly reject any client-side credential submissions for security
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "Invalid request. Google OAuth credentials must be set as server environment variables (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) in .env.local.",
-      },
-      { status: 400 }
-    );
-  } catch (error: any) {
-    return NextResponse.json(
-      { success: false, error: error.message || "Failed to process request." },
-      { status: 500 }
-    );
-  }
-}

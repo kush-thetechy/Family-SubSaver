@@ -10,7 +10,6 @@ import {
   ConsolidatedSubscriptionCandidate,
 } from "@/types";
 import { formatINR, rupeesToPaise } from "@/lib/calculations";
-import { parseBankSms } from "@/lib/connectors/sms-parser";
 import { parseSubscriptionScreenshotText } from "@/lib/connectors/subscription-screenshot-parser";
 import {
   FileUp,
@@ -18,23 +17,16 @@ import {
   AlertTriangle,
   Check,
   ArrowRight,
-  FileText,
   AlertCircle,
   Mail,
-  MessageSquare,
   Sparkles,
-  Inbox,
   RefreshCw,
   Plus,
-  Layers,
-  ChevronRight,
   ChevronDown,
   ChevronUp,
-  Scan,
   X,
   Clock,
   CreditCard,
-  ExternalLink,
   Info,
 } from "lucide-react";
 
@@ -69,25 +61,16 @@ function ImportContent() {
   >([]);
   const [screenshotSavedCount, setScreenshotSavedCount] = useState(0);
 
-  // SMS Parser state
-  const [isSmsOpen, setIsSmsOpen] = useState(false);
-  const [smsText, setSmsText] = useState("");
-  const [smsError, setSmsError] = useState("");
-
   // Gmail Scanner state
   const [gmailScanning, setGmailScanning] = useState(false);
-  const [gmailScanAborted, setGmailScanAborted] = useState(false);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailConfigured, setGmailConfigured] = useState(false);
   const [gmailStatusLoaded, setGmailStatusLoaded] = useState(false);
   const [gmailEmail, setGmailEmail] = useState<string | null>(null);
   const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
   const [modalConsent, setModalConsent] = useState(false);
-  const [isConnectingDemo, setIsConnectingDemo] = useState(false);
   const [gmailMessage, setGmailMessage] = useState("");
-  const [selectedHistoryRange, setSelectedHistoryRange] = useState<
-    "30d" | "90d" | "180d" | "1y" | "2y" | "all"
-  >("2y");
+  const [selectedHistoryRange, setSelectedHistoryRange] = useState<"30d" | "45d">("45d");
   const [gmailCandidates, setGmailCandidates] = useState<
     ConsolidatedSubscriptionCandidate[]
   >([]);
@@ -158,27 +141,33 @@ function ImportContent() {
   const handleFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const selected = e.currentTarget.files?.[0];
+    const selectedFiles = Array.from(e.currentTarget.files ?? []);
     e.currentTarget.value = "";
     setErrorMessage("");
     setSavedSuccess(false);
     setScreenshotItems([]);
     setScreenshotSavedCount(0);
 
-    if (selected) {
-      if (!hasConsented) {
-        setErrorMessage("Please accept the privacy consent before importing data.");
-        return;
-      }
-      if (!selected.type.match(/image\/(jpeg|png|webp)/)) {
-        setErrorMessage("Please select a PNG, JPEG, or WEBP subscription screenshot.");
-        return;
-      }
-      if (selected.size > 10 * 1024 * 1024) {
-        setErrorMessage("Image exceeds the 10MB limit. Please choose a smaller screenshot.");
-        return;
-      }
-      await processScreenshot(selected);
+    if (selectedFiles.length === 0) return;
+    if (!hasConsented) {
+      setErrorMessage("Please accept the privacy consent before importing data.");
+      return;
+    }
+
+    const invalidFile = selectedFiles.find(
+      (file) => !file.type.match(/image\/(jpeg|png|webp)/) || file.size > 10 * 1024 * 1024
+    );
+    if (invalidFile) {
+      setErrorMessage(
+        invalidFile.size > 10 * 1024 * 1024
+          ? `${invalidFile.name} exceeds the 10MB limit. Please choose a smaller screenshot.`
+          : `Please select PNG, JPEG, or WEBP screenshots. ${invalidFile.name} is not a supported image.`
+      );
+      return;
+    }
+
+    for (const file of selectedFiles) {
+      await processScreenshot(file);
     }
   };
 
@@ -218,22 +207,34 @@ function ImportContent() {
         return;
       }
 
-      setScreenshotItems(
-        parsed.map((item, index) => ({
-          id: `${Date.now()}-${index}`,
-          service_name: item.service_name,
-          plan_name: item.plan_name,
-          amountRupees: item.amount_rupees.toString(),
-          billing_cycle: item.billing_cycle,
-          category: item.category,
-          renewal_date: item.renewal_date,
-          billing_channel: "Screenshot",
-          confidence: item.confidence,
-          source_label: `Screenshot (${image.name})`,
-          is_duplicate: checkDuplicate(item.service_name),
-          selected: !checkDuplicate(item.service_name),
-        }))
-      );
+      setScreenshotItems((current) => {
+        const seenServices = new Set(
+          current.map((existing) => existing.service_name.trim().toLowerCase())
+        );
+        const newItems = parsed.map((item, index) => {
+          const serviceKey = item.service_name.trim().toLowerCase();
+          const isDuplicate =
+            checkDuplicate(item.service_name) || seenServices.has(serviceKey);
+          seenServices.add(serviceKey);
+
+          return {
+            id: `${Date.now()}-${index}`,
+            service_name: item.service_name,
+            plan_name: item.plan_name,
+            amountRupees: item.amount_rupees.toString(),
+            billing_cycle: item.billing_cycle,
+            category: item.category,
+            renewal_date: item.renewal_date,
+            billing_channel: "Screenshot",
+            confidence: item.confidence,
+            source_label: `Screenshot (${image.name})`,
+            is_duplicate: isDuplicate,
+            selected: !isDuplicate,
+          };
+        });
+
+        return [...current, ...newItems];
+      });
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -248,42 +249,7 @@ function ImportContent() {
     }
   };
 
-  // 2. Handle Bank / UPI SMS Parsing
-  const handleParseSms = (textToParse: string) => {
-    setSmsError("");
-    if (!hasConsented) {
-      setSmsError("Please accept the privacy consent before importing personal data.");
-      return;
-    }
-    if (!textToParse.trim()) {
-      setSmsError("Please paste an SMS message.");
-      return;
-    }
-
-    const result = parseBankSms(textToParse);
-    if (!result) {
-      setSmsError(
-        "Could not detect a debit amount or merchant name from this text. Ensure it contains an amount (e.g. Rs. 649) and service name."
-      );
-      return;
-    }
-
-    setExtractedData({
-      service_name: result.service_name,
-      plan_name: "Standard Plan",
-      amountRupees: result.amount_rupees.toString(),
-      billing_cycle: result.billing_cycle,
-      category: result.category,
-      renewal_date: "",
-      billing_channel: result.billing_channel,
-      confidence: result.confidence,
-      source_label: result.source_bank ? `${result.source_bank} SMS` : "Bank SMS",
-      is_duplicate: checkDuplicate(result.service_name),
-    });
-    setIsSmsOpen(false);
-  };
-
-  // 3. Connect to Gmail
+  // 2. Connect to Gmail
   const handleOpenConnectModal = () => {
     setErrorMessage("");
     setIsGmailModalOpen(true);
@@ -317,42 +283,9 @@ function ImportContent() {
     }
   };
 
-  const handleConnectDemoGmail = async () => {
-    setIsConnectingDemo(true);
-    setErrorMessage("");
-    try {
-      const res = await fetch("/api/connectors/gmail/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "demo_connect" }),
-      });
-      const data = (await res.json()) as {
-        success?: boolean;
-        email?: string;
-        error?: string;
-      };
-      if (data.success) {
-        setGmailConnected(true);
-        setHasConsented(true);
-        setGmailEmail(data.email || "rahul.sharma@gmail.com");
-        setIsGmailModalOpen(false);
-        setGmailMessage(
-          "Connected to demo Gmail account (rahul.sharma@gmail.com). Click 'Scan Gmail Inbox' to run multi-lane discovery."
-        );
-      } else {
-        setErrorMessage(data.error || "Failed to connect demo Gmail.");
-      }
-    } catch {
-      setErrorMessage("Network error connecting demo Gmail.");
-    } finally {
-      setIsConnectingDemo(false);
-    }
-  };
-
-  // 4. Scan Gmail (Paginated Multi-lane Search)
+  // 3. Scan Gmail (keyword-matched, recent messages only)
   const handleScanGmail = async (mode: "live" | "sandbox") => {
     setGmailScanning(true);
-    setGmailScanAborted(false);
     setErrorMessage("");
     setGmailMessage("");
     setGmailCandidates([]);
@@ -580,6 +513,28 @@ function ImportContent() {
       {/* Main Connectors Hub */}
       {!extractedData && !savedSuccess && screenshotItems.length === 0 && (
         <div className="space-y-5">
+          <div className="rounded-2xl border border-indigo-200 dark:border-indigo-900/70 bg-indigo-50/70 dark:bg-indigo-950/30 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <span className="inline-flex items-center rounded-full bg-indigo-100 dark:bg-indigo-900/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">
+                Recommended
+              </span>
+              <h2 className="mt-2 text-sm font-bold text-slate-900 dark:text-white">
+                Connect Gmail for the broadest subscription scan
+              </h2>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                We search only matching subscription, renewal, receipt, payment, and mandate emails from the past 30 or 45 days. This can find services billed directly to a card as well as store receipts.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={gmailConnected ? () => handleScanGmail("live") : handleOpenConnectModal}
+              disabled={gmailScanning}
+              className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {gmailScanning ? "Scanning matching emails..." : gmailConnected ? "Scan Gmail" : "Connect Gmail"}
+            </button>
+          </div>
+
           {/* Main Visual Dropzone (Screenshot OCR) */}
           <div className="bg-white dark:bg-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8 text-center transition hover:border-indigo-400 dark:hover:border-indigo-600 shadow-sm relative overflow-hidden group">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-sm group-hover:scale-105 transition-transform duration-200">
@@ -587,18 +542,23 @@ function ImportContent() {
             </div>
 
             <h2 className="font-bold text-base text-slate-900 dark:text-white mt-3">
-              Upload a Subscription Screenshot
+              Prefer not to connect Gmail? Upload store screenshots
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
-              Select a screenshot of your active subscriptions. On-device OCR reads visible service names, plans, prices, and payment dates in this browser.
+              Screenshots can capture subscriptions listed in Google Play or Apple settings. Scroll through the list and select multiple screenshots if needed; direct-billed subscriptions may not appear there.
+            </p>
+
+            <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+              Android: Play Store → profile picture → Payments &amp; subscriptions → Subscriptions. iPhone: Settings → your name → Subscriptions.
             </p>
 
             <div className="mt-5 flex justify-center">
               <label className="cursor-pointer px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-sm transition inline-flex items-center gap-2">
-                <span>Select Screenshot</span>
+                <span>Select Screenshot(s)</span>
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -621,7 +581,7 @@ function ImportContent() {
           </div>
 
           {/* Quick Connectors Deck */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             {/* 1. Gmail Subscription Discovery Card */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4 hover:border-slate-300 dark:hover:border-slate-700 transition">
               <div>
@@ -648,10 +608,10 @@ function ImportContent() {
                   </span>
                 </div>
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                  Gmail Discovery
+                  Gmail Subscription Scan
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  Scans Google Play, Apple receipts, merchant invoices, and bank e-mandates.
+                  Searches matching Google Play and Apple receipts, direct merchant billing emails, and bank e-mandate notices. Message bodies are fetched only after Gmail search finds the keywords.
                 </p>
               </div>
 
@@ -661,29 +621,25 @@ function ImportContent() {
                     role="status"
                     className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:text-amber-200"
                   >
-                    Live Gmail linking needs server OAuth settings. The sample scan works now; choose Connect Gmail to see the setup details.
+                    Live Gmail linking needs server OAuth settings. You can preview sample results without connecting an inbox.
                   </p>
                 )}
                 {gmailConnected && (
                   <div className="space-y-1.5 pb-1">
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                      Search timeframe:
+                      Search timeframe (maximum 45 days):
                     </label>
                     <select
                       value={selectedHistoryRange}
                       onChange={(e) =>
                         setSelectedHistoryRange(
-                          e.target.value as "30d" | "90d" | "180d" | "1y" | "2y" | "all"
+                          e.target.value as "30d" | "45d"
                         )
                       }
                       className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200"
                     >
                       <option value="30d">Past 30 days</option>
-                      <option value="90d">Past 90 days</option>
-                      <option value="180d">Past 6 months</option>
-                      <option value="1y">Past 1 year</option>
-                      <option value="2y">Past 2 years (Recommended)</option>
-                      <option value="all">All mailbox history</option>
+                      <option value="45d">Past 45 days</option>
                     </select>
                   </div>
                 )}
@@ -704,22 +660,11 @@ function ImportContent() {
                     <Sparkles className="w-3.5 h-3.5 text-white" />
                   )}
                   {gmailScanning
-                    ? "Searching evidence lanes..."
+                    ? "Searching matching emails..."
                     : gmailConnected
                       ? "Scan Gmail Inbox"
                       : "Connect Gmail"}
                 </button>
-
-                {!gmailConnected && (
-                  <button
-                    type="button"
-                    onClick={handleConnectDemoGmail}
-                    disabled={isConnectingDemo}
-                    className="w-full py-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-medium hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition"
-                  >
-                    {isConnectingDemo ? "Connecting..." : "Connect Demo Account (Instant)"}
-                  </button>
-                )}
 
                 <button
                   type="button"
@@ -727,7 +672,7 @@ function ImportContent() {
                   disabled={gmailScanning}
                   className="w-full py-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-medium hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition"
                 >
-                  Preview with sample evidence
+                  Preview sample results (no inbox access)
                 </button>
 
                 {gmailConnected && (
@@ -742,150 +687,7 @@ function ImportContent() {
               </div>
             </div>
 
-            {/* 2. Bank SMS Parser Card */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4 hover:border-slate-300 dark:hover:border-slate-700 transition">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-                    <MessageSquare className="w-5 h-5" />
-                  </div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full">
-                    UPI AutoPay
-                  </span>
-                </div>
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                  Bank SMS / UPI Parser
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  Paste bank debit or AutoPay mandate texts from HDFC, ICICI, SBI, Axis.
-                </p>
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setIsSmsOpen(!isSmsOpen)}
-                  className="w-full py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-800 dark:text-slate-200 text-xs font-semibold transition flex items-center justify-center gap-1.5"
-                >
-                  <Scan className="w-3.5 h-3.5 text-indigo-500" />
-                  {isSmsOpen ? "Close SMS Drawer" : "Paste SMS Notification"}
-                </button>
-              </div>
-            </div>
-
-            {/* 3. Inbound Forwarding Webhook Card */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4 hover:border-slate-300 dark:hover:border-slate-700 transition">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                    <Inbox className="w-5 h-5" />
-                  </div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full">
-                    Demo only
-                  </span>
-                </div>
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                  Email Forwarding
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  Forward receipts to a dedicated inbound address (demo configuration).
-                </p>
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  disabled
-                  className="w-full py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-not-allowed"
-                >
-                  <Inbox className="w-3.5 h-3.5" />
-                  Not configured in demo
-                </button>
-              </div>
-            </div>
           </div>
-
-          {/* Expandable Bank SMS Parser Drawer */}
-          {isSmsOpen && (
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-900/60 shadow-md space-y-3 animate-in fade-in duration-200">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-900 dark:text-white">
-                  Paste Transactional Bank SMS:
-                </span>
-                <span className="text-[11px] text-slate-400">
-                  Quick test templates:
-                </span>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleParseSms(
-                      "Dear Customer, Rs. 649.00 has been debited from account **1234 towards NETFLIX on 15-OCT-26 via UPI Ref 4293847291 - HDFC Bank"
-                    )
-                  }
-                  className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 rounded-lg border border-slate-200 dark:border-slate-700 transition"
-                >
-                  HDFC (Netflix ₹649)
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleParseSms(
-                      "ICICI Bank Acct XX567 debited for Rs 119.00 on 10-Oct-26. Info: BIL*SPOTIFY INDIA*AUTOPAY."
-                    )
-                  }
-                  className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 rounded-lg border border-slate-200 dark:border-slate-700 transition"
-                >
-                  ICICI (Spotify ₹119)
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleParseSms(
-                      "Your a/c no. XXXXXXXX1234 is debited by Rs.899.00 on 05/10/26 by transfer to Disney Star Hotstar UPI Ref no 428192849 - State Bank of India (SBI)"
-                    )
-                  }
-                  className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 rounded-lg border border-slate-200 dark:border-slate-700 transition"
-                >
-                  SBI (Hotstar ₹899)
-                </button>
-              </div>
-
-              <textarea
-                rows={2}
-                placeholder="Or paste your own SMS debit message..."
-                value={smsText}
-                onChange={(e) => setSmsText(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              />
-
-              {smsError && (
-                <div className="p-2 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span>{smsError}</span>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSmsOpen(false)}
-                  className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleParseSms(smsText)}
-                  className="px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm transition"
-                >
-                  Parse SMS
-                </button>
-              </div>
-            </div>
-          )}
 
           {gmailMessage && (
             <div
@@ -1532,7 +1334,7 @@ function ImportContent() {
                   Connect Gmail for Subscription Discovery
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Read-only search across store receipts, invoices, and bank e-mandates
+                  Read-only keyword search, limited to the past 30 or 45 days
                 </p>
               </div>
             </div>
@@ -1545,7 +1347,7 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Read-only scope:</strong> The app only requests <code className="text-indigo-600">gmail.readonly</code> to search for invoices, receipts, and recurring e-mandates.
+                  <strong>Targeted, recent search:</strong> The app requests <code className="text-indigo-600">gmail.readonly</code> and searches only the past 30 or 45 days for subscription, renewal, receipt, payment, merchant, and recurring mandate terms. Message contents are fetched only for search matches.
                 </li>
                 <li>
                   <strong>Zero email body retention:</strong> Message bodies are parsed in memory on the server and immediately discarded. No full emails or personal messages are ever stored or logged.
@@ -1568,7 +1370,7 @@ function ImportContent() {
                 className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
               />
               <span>
-                I understand and consent to a read-only search of my Gmail receipts and recurring invoice notices.
+                I understand and consent to a read-only search of keyword-matched Gmail messages from the past 30 or 45 days.
               </span>
             </label>
 
@@ -1595,21 +1397,6 @@ function ImportContent() {
                   </p>
                 </div>
               )}
-
-              {/* Instant Demo Option */}
-              <button
-                type="button"
-                onClick={handleConnectDemoGmail}
-                disabled={isConnectingDemo}
-                className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-sm transition disabled:opacity-50 flex items-center justify-center gap-1.5"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>
-                  {isConnectingDemo
-                    ? "Connecting Demo Mailbox..."
-                    : "Connect Demo Mailbox (Instant — Zero Setup)"}
-                </span>
-              </button>
             </div>
           </div>
         </div>

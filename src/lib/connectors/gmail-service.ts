@@ -64,6 +64,16 @@ export const KNOWN_SERVICES: ServiceDescriptor[] = [
   { name: "Cult.fit", category: "fitness", keywords: ["cult.fit", "cult fit", "curefit"] },
   { name: "Strava", category: "fitness", keywords: ["strava"] },
   { name: "Notion", category: "utilities", keywords: ["notion"] },
+  { name: "Microsoft 365", category: "utilities", keywords: ["microsoft 365", "office 365", "microsoft subscription"] },
+  { name: "Adobe", category: "utilities", keywords: ["adobe", "creative cloud"] },
+  { name: "Dropbox", category: "cloud", keywords: ["dropbox"] },
+  { name: "Canva", category: "utilities", keywords: ["canva"] },
+  { name: "Grammarly", category: "utilities", keywords: ["grammarly"] },
+  { name: "LinkedIn Premium", category: "utilities", keywords: ["linkedin premium"] },
+  { name: "Audible", category: "ott", keywords: ["audible"] },
+  { name: "Zoom", category: "utilities", keywords: ["zoom"] },
+  { name: "Xbox Game Pass", category: "gaming", keywords: ["xbox game pass", "game pass"] },
+  { name: "iCloud", category: "cloud", keywords: ["icloud"] },
 ];
 
 export function decodeBase64Url(data: string): string {
@@ -441,6 +451,12 @@ export function parseAppleReceipt(
     if (genericItemMatch) rawItem = genericItemMatch[1].trim();
   }
 
+  // Avoid treating one-time Apple purchases as subscriptions merely because
+  // the standard receipt footer mentions subscription settings.
+  const hasRecurringItemSignal = Boolean(itemMatch) ||
+    /\b(monthly|annual|yearly|quarterly|weekly|subscription)\b/i.test(rawItem);
+  if (!hasRecurringItemSignal) return null;
+
   let serviceName = "Apple Subscription";
   let planName: string | undefined;
 
@@ -652,6 +668,13 @@ export function parseGeneralGmailMessage(
   // 2. Check Apple
   const appleEvidence = parseAppleReceipt(message, clean, subject, sender, emailDate);
   if (appleEvidence) return appleEvidence;
+  if (
+    sender.toLowerCase().includes("apple.com") ||
+    subject.toLowerCase().includes("receipt from apple") ||
+    subject.toLowerCase().includes("invoice from apple")
+  ) {
+    return null;
+  }
 
   // 3. Check Bank E-Mandate
   const mandateEvidence = parseBankMandateEmail(message, clean, subject, sender, emailDate);
@@ -729,14 +752,25 @@ export function consolidateEvidenceToCandidates(
 
   for (const ev of evidenceList) {
     const normService = normalizeServiceName(ev.merchant_raw || ev.summary);
-    // Grouping key: Normalized service name + billing channel family
+    // Keep distinct store/direct subscriptions separate, but merge a bank
+    // mandate into a matching store receipt for the same known service.
     const channelFamily = ev.billing_channel?.toLowerCase().includes("play")
       ? "google_play"
       : ev.billing_channel?.toLowerCase().includes("apple")
         ? "apple"
         : "direct";
 
-    const key = `${normService.toLowerCase()}_${channelFamily}`;
+    const exactKey = `${normService.toLowerCase()}_${channelFamily}`;
+    const matchingCrossChannelKey = Array.from(candidateMap.entries()).find(
+      ([, candidate]) =>
+        candidate.service_name.toLowerCase() === normService.toLowerCase() &&
+        ((ev.evidence_type === "mandate_registration" &&
+          candidate.evidence.some((evidence) => evidence.evidence_type === "store_receipt")) ||
+          (ev.evidence_type === "store_receipt" &&
+            candidate.evidence.some((evidence) => evidence.evidence_type === "mandate_registration") &&
+            !candidate.evidence.some((evidence) => evidence.evidence_type === "store_receipt")))
+    )?.[0];
+    const key = matchingCrossChannelKey ?? exactKey;
 
     if (!candidateMap.has(key)) {
       const cycle: BillingCycle | "unknown" =
@@ -797,6 +831,18 @@ export function consolidateEvidenceToCandidates(
       // Merge with existing candidate
       const cand = candidateMap.get(key)!;
       cand.evidence.push(ev);
+
+      if (
+        (ev.evidence_type === "mandate_registration" &&
+          cand.evidence.some((evidence) => evidence.evidence_type === "store_receipt")) ||
+        (ev.evidence_type === "store_receipt" &&
+          cand.evidence.some((evidence) => evidence.evidence_type === "mandate_registration"))
+      ) {
+        const duplicateNote = "Bank mandate may be payment evidence for this app-store subscription; review both sources together";
+        if (!cand.needs_review_reasons.includes(duplicateNote)) {
+          cand.needs_review_reasons.push(duplicateNote);
+        }
+      }
 
       if (!cand.plan_name && ev.plan_name) {
         cand.plan_name = ev.plan_name;
@@ -868,9 +914,148 @@ export function consolidateEvidenceToCandidates(
 // ============================================================================
 
 export interface ScanOptions {
-  historyRange?: "30d" | "90d" | "180d" | "1y" | "2y" | "all";
-  maxMessagesPerLane?: number;
+  historyRange?: GmailHistoryRange;
   existingSubscriptions?: Subscription[];
+}
+
+export type GmailHistoryRange = "30d" | "45d";
+
+/** Clamp every caller, including direct API requests, to the supported 30–45 day window. */
+export function normalizeGmailHistoryRange(value?: unknown): GmailHistoryRange {
+  return value === "30d" ? "30d" : "45d";
+}
+
+const STORE_SUBSCRIPTION_KEYWORDS = [
+  "subscription",
+  "auto-renewing",
+  "auto-renew",
+  "renewal",
+  "renewed",
+  "renews",
+  "monthly",
+  "annual",
+];
+
+const SUBSCRIPTION_EVENT_KEYWORDS = [
+  "subscription",
+  "renewal",
+  "subscription renewal",
+  "subscription renewed",
+  "renewed",
+  "renews",
+  "auto-renew",
+  "auto renewal",
+  "automatic renewal",
+  "recurring payment",
+  "recurring billing",
+  "recurring charge",
+  "membership renewed",
+  "membership renewal",
+  "cancellation confirmation",
+  "subscription ended",
+  "membership expired",
+  "cancelled",
+  "canceled",
+  "payment failed",
+  "auto-renewal failed",
+  "trial ending",
+  "trial ends",
+  "trial expires",
+  "next billing date",
+  "next payment date",
+  "next charge date",
+  "upcoming renewal",
+  "upcoming payment",
+  "monthly plan",
+  "monthly subscription",
+  "annual plan",
+  "annual subscription",
+  "yearly plan",
+];
+
+const BILLING_KEYWORDS = [
+  "invoice",
+  "receipt",
+  "payment",
+  "charged",
+  "charge",
+  "billed",
+  "billing",
+  "amount due",
+  "payment confirmation",
+  "payment failed",
+  "declined",
+  "cancellation confirmation",
+  "subscription ended",
+  "membership expired",
+  "cancelled",
+  "canceled",
+];
+
+const MANDATE_KEYWORDS = [
+  "e-mandate",
+  "e mandate",
+  "e-nach",
+  "nach mandate",
+  "upi autopay",
+  "ach debit",
+  "mandate",
+  "mandate registration",
+  "mandate registered",
+  "standing instruction",
+  "merchant mandate",
+  "card mandate",
+  "si hub",
+  "autopay",
+  "auto payment",
+  "auto debit",
+  "auto-debit",
+  "merchant initiated transaction",
+  "recurring transaction",
+  "recurring debit",
+  "pre-debit",
+  "pre debit",
+  "scheduled debit",
+];
+
+const KNOWN_PROVIDER_SEARCH_TERMS = Array.from(
+  new Set(KNOWN_SERVICES.flatMap((service) => service.keywords))
+);
+
+function gmailAnyOf(terms: string[]): string {
+  return `{${terms.map((term) => `"${term}"`).join(" ")}}`;
+}
+
+function hasAnyKeyword(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function hasSubscriptionEmailKeywords(message: GmailMessage): boolean {
+  const headers = message.payload?.headers ?? [];
+  const searchableText = cleanHtmlText(
+    [
+      getHeader(headers, "from"),
+      getHeader(headers, "subject"),
+      message.snippet,
+      ...getBodyText(message.payload ?? {}),
+    ]
+      .filter(Boolean)
+      .join("\n")
+  ).toLowerCase();
+
+  if (hasAnyKeyword(searchableText, MANDATE_KEYWORDS)) return true;
+
+  const hasBillingSignal = hasAnyKeyword(searchableText, BILLING_KEYWORDS);
+  const hasSubscriptionSignal = hasAnyKeyword(searchableText, [
+    ...SUBSCRIPTION_EVENT_KEYWORDS,
+    "monthly",
+    "yearly",
+    "annual",
+    "per month",
+    "per year",
+  ]);
+
+  return hasBillingSignal && hasSubscriptionSignal;
 }
 
 export async function fetchGmailJson<T>(url: string, accessToken: string): Promise<T> {
@@ -889,8 +1074,8 @@ export async function fetchGmailJson<T>(url: string, accessToken: string): Promi
 }
 
 /**
- * Searches across multiple evidence lanes, paginating and deduplicating message IDs,
- * parsing in memory and discarding message bodies.
+ * Searches across multiple keyword lanes, paginates all matching IDs within the
+ * selected recent window, parses matched messages in memory, and discards bodies.
  */
 export async function searchGmailMultiLane(
   accessToken: string,
@@ -900,50 +1085,61 @@ export async function searchGmailMultiLane(
   totalMessagesScanned: number;
   lanesScanned: string[];
 }> {
-  const historyRange = options.historyRange || "2y";
-  const dateFilter = historyRange === "all" ? "" : `newer_than:${historyRange} `;
+  const historyRange = normalizeGmailHistoryRange(options.historyRange);
+  const dateFilter = `newer_than:${historyRange} `;
+  const billingTerms = gmailAnyOf(BILLING_KEYWORDS);
+  const recurringTerms = gmailAnyOf(SUBSCRIPTION_EVENT_KEYWORDS);
+  const knownProviderTerms = gmailAnyOf(KNOWN_PROVIDER_SEARCH_TERMS);
+  const storeTerms = gmailAnyOf(STORE_SUBSCRIPTION_KEYWORDS);
+  const mandateTerms = gmailAnyOf(MANDATE_KEYWORDS);
 
   const lanes = [
     {
       name: "Store Receipts & Renewals",
-      query: `${dateFilter}(from:(googleplay-noreply@google.com OR "no_reply@email.apple.com" OR "do_not_reply@apple.com") OR subject:("Google Play Order Receipt" OR "receipt from Apple" OR "invoice from Apple" OR "subscription renewed" OR "order receipt"))`,
+      query: `${dateFilter}((from:googleplay-noreply@google.com OR from:no_reply@email.apple.com OR from:do_not_reply@apple.com OR subject:("Google Play Order Receipt" OR "receipt from Apple" OR "invoice from Apple")) ${storeTerms})`,
     },
     {
       name: "Direct Merchant Invoices",
-      query: `${dateFilter}(subject:(invoice OR receipt OR "payment confirmation" OR "payment received" OR "subscription renewal" OR "membership renewed") AND ("INR" OR "Rs" OR "₹" OR "Netflix" OR "Spotify" OR "Hotstar" OR "Google One" OR "ChatGPT" OR "Apple"))`,
+      query: `${dateFilter}((${recurringTerms} ${billingTerms}) OR (${knownProviderTerms} ${billingTerms} ${gmailAnyOf(["subscription", "renewal", "renewed", "recurring", "monthly", "annual", "yearly", "auto-renew"])}))`,
     },
     {
       name: "Bank E-Mandates & Alerts",
-      query: `${dateFilter}(subject:("e-mandate" OR "mandate" OR "standing instruction" OR "SI Hub" OR "AutoPay" OR "pre-debit") OR "e-mandate" OR "SI Hub")`,
+      query: `${dateFilter}${mandateTerms}`,
     },
   ];
 
   const uniqueMessageIds = new Set<string>();
 
-  // Run paginated list across lanes
+  // Run paginated list across lanes. Gmail returns IDs here; full contents are
+  // fetched only after a message has matched the keyword query.
   for (const lane of lanes) {
     try {
-      const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-      listUrl.searchParams.set("q", lane.query);
-      listUrl.searchParams.set("maxResults", "30");
+      let pageToken: string | undefined;
+      do {
+        const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+        listUrl.searchParams.set("q", lane.query);
+        listUrl.searchParams.set("maxResults", "100");
+        if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
-      const listRes = await fetchGmailJson<{ messages?: { id: string }[]; nextPageToken?: string }>(
-        listUrl.toString(),
-        accessToken
-      );
+        const listRes = await fetchGmailJson<{
+          messages?: { id: string }[];
+          nextPageToken?: string;
+        }>(listUrl.toString(), accessToken);
 
-      if (listRes.messages) {
-        for (const m of listRes.messages) {
-          uniqueMessageIds.add(m.id);
+        if (listRes.messages) {
+          for (const message of listRes.messages) {
+            uniqueMessageIds.add(message.id);
+          }
         }
-      }
+        pageToken = listRes.nextPageToken;
+      } while (pageToken);
     } catch {
       // Continue with other lanes if one lane throttles
     }
   }
 
-  // Fetch and parse message contents in parallel batches of 5
-  const messageIdList = Array.from(uniqueMessageIds).slice(0, 50); // Safe batch cap per scan
+  // Fetch only query-matched message contents in parallel batches of 5.
+  const messageIdList = Array.from(uniqueMessageIds);
   const evidenceList: DiscoveryEvidence[] = [];
 
   for (let i = 0; i < messageIdList.length; i += 5) {
@@ -955,6 +1151,7 @@ export async function searchGmailMultiLane(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`,
             accessToken
           );
+          if (!hasSubscriptionEmailKeywords(msg)) return null;
           return parseGeneralGmailMessage(msg);
         } catch {
           return null;

@@ -8,6 +8,7 @@ import {
 import {
   GmailApiError,
   getSampleConsolidatedCandidates,
+  normalizeGmailHistoryRange,
   searchGmailMultiLane,
   ScanOptions,
 } from "@/lib/connectors/gmail-service";
@@ -15,8 +16,7 @@ import { Subscription } from "@/types";
 
 interface ScanRequestBody {
   mode?: "live" | "sandbox";
-  historyRange?: "30d" | "90d" | "180d" | "1y" | "2y" | "all";
-  maxMessages?: number;
+  historyRange?: string;
   existingSubscriptions?: Subscription[];
 }
 
@@ -32,14 +32,12 @@ export async function GET() {
       isSessionEncryptionConfigured()
   );
   const session = getSessionFromRequestCookies();
-  const connected = Boolean(session);
-  const isDemo = Boolean(session?.isDemo);
+  const connected = Boolean(session && !session.isDemo);
 
   return NextResponse.json({
     configured,
     connected,
-    isDemo,
-    email: session?.email || (isDemo ? "rahul.sharma@gmail.com" : null),
+    email: connected ? session?.email ?? null : null,
   });
 }
 
@@ -92,27 +90,26 @@ export async function POST(request: Request) {
   }
 
   const session = getSessionFromRequestCookies();
+  const historyRange = normalizeGmailHistoryRange(body.historyRange);
 
-  // 1. Handle Demo / Sandbox Mode
-  if (body.mode === "sandbox" || session?.isDemo) {
+  // 1. Handle the explicit sample-results preview.
+  if (body.mode === "sandbox") {
     const sampleCandidates = getSampleConsolidatedCandidates(
       body.existingSubscriptions ?? []
     );
     return NextResponse.json({
       success: true,
-      mode: session?.isDemo ? "live_demo" : "sandbox",
+      mode: "sandbox",
       count: sampleCandidates.length,
       candidates: sampleCandidates,
       totalMessagesScanned: 18,
-      historyRange: body.historyRange || "2y",
+      historyRange,
       lanesScanned: [
         "Store Receipts & Renewals",
         "Direct Merchant Invoices",
         "Bank E-Mandates & Alerts",
       ],
-      message: session?.isDemo
-        ? `Found ${sampleCandidates.length} candidate subscriptions with evidence across Google Play, Apple, direct billing, and HDFC e-mandate in demo account.`
-        : "Showing sample discovery candidates across Google Play, Apple, direct billing, and HDFC e-mandate. No live Gmail inbox was scanned.",
+      message: "Showing sample discovery candidates across Google Play, Apple, direct billing, and HDFC e-mandate. No live Gmail inbox was scanned.",
     });
   }
 
@@ -203,7 +200,7 @@ export async function POST(request: Request) {
   // Execute live multi-lane search
   try {
     const scanOptions: ScanOptions = {
-      historyRange: body.historyRange || "2y",
+      historyRange,
       existingSubscriptions: body.existingSubscriptions,
     };
 
@@ -220,8 +217,8 @@ export async function POST(request: Request) {
       lanesScanned,
       message:
         candidates.length > 0
-          ? `Discovered ${candidates.length} likely subscription candidates from ${totalMessagesScanned} receipts and alerts. Review each candidate before saving.`
-          : `Scanned ${totalMessagesScanned} messages across ${lanesScanned.length} lanes, but found no recurring subscription receipts in the selected timeframe.`,
+          ? `Discovered ${candidates.length} likely subscription candidates from ${totalMessagesScanned} keyword-matched emails in the past ${historyRange === "30d" ? "30" : "45"} days. Review each candidate before saving.`
+          : `Checked ${totalMessagesScanned} keyword-matched emails from the past ${historyRange === "30d" ? "30" : "45"} days across ${lanesScanned.length} lanes, but found no recurring subscription receipts.`,
     });
     setSessionCookie(response, sessionToPersist);
     return response;

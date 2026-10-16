@@ -141,21 +141,22 @@ The user should be able to select screenshots from their device; the tool should
 
 ### Find subscriptions in email
 
-Offer an explicit, consent-based scan of subscription receipts and renewal notices, plus manual forwarding or upload only if a real, secure path is implemented. Useful patterns include:
+Recommend connecting Gmail as the easiest way to find subscriptions billed through app stores, merchants, or recurring card/bank mandates. The user starts each scan and grants read-only access. Search only the previous **30 or 45 days**, and fetch message contents only for Gmail search results that match the subscription and billing keywords below. Parse in memory, then discard message bodies. For users who do not want to connect Gmail, offer screenshots of the active Google Play and Apple subscription lists instead; these cover store-managed subscriptions, while direct-billed services may need Gmail or manual entry.
 
 * **Google Play:** messages commonly have a subject like “Your Google Play Order Receipt” and include the app or plan, order date, recurring price and period (for example, `₹330.00/month`), Google account, and payment method. A renewal email is evidence of a charge or renewal, not a complete live list of active subscriptions.
 * **Apple:** search for “receipt from Apple” or “invoice from Apple.” A receipt can show the purchased item, amount, date and Apple Account; it may group multiple items. Apple lets users enable **Renewal Receipt Emails** in the subscription settings. A receipt proves a purchase/charge, but may not establish current renewal status or the next renewal date.
-* **Direct-billed services:** provider emails may say “invoice,” “payment received,” “renewal,” or “subscription renewed.” Match the provider, plan, amount, currency, billing interval and dates where available. Do not classify a one-time purchase as recurring based on a merchant name alone.
+* **Direct-billed services:** look for combinations such as “subscription,” “renewal,” “renews,” “auto-renew,” “automatic renewal,” “recurring payment/billing/charge,” “membership renewed,” “trial ending/ends/expires,” “next billing/payment/charge date,” “upcoming renewal,” “invoice,” “receipt,” “payment,” “charged,” and “billed.” Known providers can help narrow invoice searches; do not classify a one-time purchase as recurring based on a merchant name alone.
+* **Bank/card mandates:** look for terms such as “e-mandate,” “e-NACH,” “NACH mandate,” “UPI AutoPay,” “SI Hub,” “standing instruction,” “merchant mandate,” “card mandate,” “auto-debit,” “merchant initiated transaction,” “recurring transaction,” “pre-debit,” “scheduled debit,” and “recurring debit.” HDFC-style alerts may contain “current transaction amount,” “maximum transaction amount,” and “frequency.” The maximum mandate limit is not the subscription price.
 
-Email wording and fields vary by merchant, country and payment route. Parse the whole message conservatively, preserve the source/date for review, distinguish charge date from next renewal date, detect likely duplicate receipts, and ask the user to confirm status and details before adding a subscription. A missing email is not evidence that no subscription exists.
+Email wording and fields vary by merchant, country and payment route. Only search and fetch messages matching these keywords, preserve the source/date for review, distinguish charge date from next renewal date, detect likely duplicate receipts across app-store and bank evidence, and ask the user to confirm status and details before adding a subscription. A matching receipt or mandate is evidence to review, not proof that a subscription is still active. A missing email is not evidence that no subscription exists.
 
 ### Find subscriptions billed outside app stores
 
 Use several user-controlled signals rather than relying on one feed:
 
-1. Search consented email for merchant invoices, renewal notices and payment confirmations, including direct subscriptions paid by card, UPI AutoPay or bank debit.
-2. In a later iteration, let users import bank/card statements or paste transaction alerts. Identify repeated merchant and amount patterns over time as **possible recurring charges**, then ask the user to confirm the merchant, billing period, payer and whether it is still active.
-3. Allow manual entry and an audit checklist for subscriptions with no reliable digital receipt.
+1. Search consented Gmail for subscription-related merchant invoices, renewal notices and payment confirmations, including direct subscriptions paid by card, UPI AutoPay or bank debit.
+2. In a later iteration, consider importing bank/card statements to identify repeated merchant and amount patterns as **possible recurring charges**, then ask the user to confirm the merchant, billing period, payer and whether it is still active.
+3. Allow manual entry and an audit checklist for subscriptions with no reliable digital receipt. Users who do not want Gmail access can upload app-store subscription screenshots as a private, local alternative.
 
 Recurring-transaction matching is a lead, not proof: amounts can change, annual charges are easy to miss, and similar merchant descriptors can refer to unrelated purchases. Do not request card numbers, CVVs, banking passwords or OTPs. Do not connect to banks or read SMS automatically in the initial product; any future financial-data integration needs a separate consent, security, retention and regulatory review.
 
@@ -321,7 +322,7 @@ Create `.env.local` using `.env.example` if available. Never commit `.env.local`
 
 ### Connect Gmail for subscription discovery
 
-Gmail discovery is optional, read-only, and explicitly user-triggered. Without Google credentials, use **Connect Demo Account (Instant)** or **Preview with sample evidence** on the Import page to test the full multi-lane discovery and cross-source deduplication flow without accessing an inbox.
+Gmail discovery is optional, read-only, and explicitly user-triggered. A live scan searches only keyword-matched emails from the previous 30 or 45 days. Use **Preview sample results** on the Import page to explore the review flow without accessing an inbox.
 
 #### Live Google Cloud configuration
 
@@ -337,15 +338,15 @@ Gmail discovery is optional, read-only, and explicitly user-triggered. Without G
    Generate the local session secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Configure a different secret in Vercel for production; Gmail sessions are encrypted into an `HttpOnly` cookie so they survive serverless requests without an in-memory session map.
 4. Restart the development server (`npm run dev`).
 5. Open the **Import** page, click **Connect Gmail**, review the data disclosure and consent terms, and approve read-only Google access.
-6. Select your history timeframe (30 days, 90 days, 6 months, 1 year, 2 years, or all history), and click **Scan Gmail Inbox**.
+6. Select **Past 30 days** or **Past 45 days**, then click **Scan Gmail Inbox**. The server enforces this limit even if a request submits a longer range.
 
 #### Discovery architecture & evidence lanes
 
-Rather than stopping at a small fixed cap, the discovery engine paginates across separate evidence lanes:
+The discovery engine paginates all recent keyword matches through three evidence lanes. Gmail's search filters messages before their contents are fetched, and the 30/45-day date filter applies to every lane:
 
-* **Store Receipts & Renewals:** Google Play order receipts (`GPA.*`), app names, plan tiers, auto-renewal notices, and Apple App Store receipts/invoices. Gross recurring amounts are extracted accurately (differentiating line-item totals from subtotals and IGST/taxes).
-* **Direct Merchant Billing:** Invoices, renewals, trial conversion alerts, payment failures, and cancellation notices from direct providers (Netflix, Spotify, Disney+ Hotstar, YouTube Premium, Google One, ChatGPT, Claude, Apple, Airtel, Jio, etc.).
-* **Bank/Card E-Mandates & Standing Instructions:** Recurring e-mandate registrations, SI Hub notices, and pre-debit alerts from Indian banks (HDFC, ICICI, SBI, Axis). The current recurring charge is distinguished from the maximum mandate limit/cap (e.g. ₹490 debit vs ₹15,000 cap).
+* **Store Receipts & Renewals:** Google Play receipts and renewal messages, plus Apple App Store receipts/invoices with subscription or renewal terms. Google Play receipt IDs (`GPA.*`), app names, plan tiers, recurring price and period are captured when present. Apple gross totals are distinguished from subtotals and IGST/taxes.
+* **Direct Merchant Billing:** Search for combinations of subscription/renewal terms and billing terms, plus known provider names such as Netflix, Spotify, Disney+ Hotstar, YouTube Premium, Google One, Microsoft 365, Adobe, Dropbox, ChatGPT, Claude, Apple, Airtel and Jio.
+* **Bank/Card E-Mandates & Standing Instructions:** Search for e-mandate registrations, SI Hub notices, AutoPay, standing instructions and pre-debit alerts from banks. The current recurring charge is distinguished from the maximum mandate limit/cap (e.g. ₹490 debit vs ₹15,000 cap).
 * **Cross-Source Consolidation:** Multiple receipts across months, store order receipts, and bank debit alerts are consolidated into a single candidate with attached source evidence history, rather than creating separate duplicate subscriptions.
 * **Conservative Status & Unknown Intervals:** Mandates and receipts are not presumed to be active consumer subscriptions; status is labelled (`Likely Active`, `Needs Confirmation`, `Cancelled / Expired`, `Payment Failed`). Missing billing cycles are marked `unknown` for review rather than defaulting to monthly.
 
@@ -484,9 +485,9 @@ Do not paywall privacy, access control, data correction or deletion. Do not enab
 |Manual entry|Supported|Users may forget services|
 |Screenshot/receipt import|On-device OCR for supported screenshots; optional receipt extraction|OCR can miss text; user confirmation required|
 |App Store/Play Store|User-guided subscription list and screenshot import|No universal listing API assumed; screenshot is only a snapshot|
-|Email receipts|Optional, user-triggered Gmail scan; forwarding card is demo-only|Supported merchant coverage is limited; no continuous scan|
-|Bank/card data|Manual entry or pasted transaction evidence|No bank integration or automatic recurring-charge detection in v1|
-|UPI AutoPay|Manual/user-reported initially|No automatic mandate discovery|
+|Email receipts|Optional, user-triggered Gmail keyword scan limited to the last 30 or 45 days|Supported merchant coverage is limited; only matched message contents are fetched; no continuous scan|
+|Bank/card data|Gmail keyword matches for recurring mandate notices; manual entry otherwise|No bank integration or automatic statement analysis in v1|
+|UPI AutoPay|Gmail search for mandate and pre-debit notices|Coverage depends on the bank's email wording; user confirmation required|
 |Telecom bundles|User-provided plan plus sourced catalog|Offers and eligibility change|
 |Cancellation|Provider link where appropriate|App does not cancel subscriptions|
 
