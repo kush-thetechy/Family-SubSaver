@@ -8,6 +8,8 @@ import {
   BillingCycle,
   SubscriptionCategory,
   ConsolidatedSubscriptionCandidate,
+  GmailHistoryRange,
+  GmailScanCoverage,
 } from "@/types";
 import { formatINR, rupeesToPaise } from "@/lib/calculations";
 import { parseSubscriptionScreenshotText } from "@/lib/connectors/subscription-screenshot-parser";
@@ -51,6 +53,23 @@ interface ScreenshotReviewItem extends ExtractedItem {
 const MAX_SCREENSHOTS_PER_IMPORT = 5;
 const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
 
+function canBulkAddGmailCandidate(
+  candidate: ConsolidatedSubscriptionCandidate
+): candidate is ConsolidatedSubscriptionCandidate & {
+  status: "likely_active" | "needs_confirmation";
+  amount_rupees: number;
+  billing_cycle: BillingCycle;
+} {
+  return (
+    (candidate.status === "likely_active" ||
+      candidate.status === "needs_confirmation") &&
+    !candidate.is_possible_duplicate &&
+    typeof candidate.amount_rupees === "number" &&
+    candidate.amount_rupees > 0 &&
+    candidate.billing_cycle !== "unknown"
+  );
+}
+
 function ImportContent() {
   const searchParams = useSearchParams();
   const { currentProfile, household, subscriptions, addSubscription } = useApp();
@@ -68,6 +87,7 @@ function ImportContent() {
   const [gmailScanning, setGmailScanning] = useState(false);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailConfigured, setGmailConfigured] = useState(false);
+  const [gmailTokenAvailable, setGmailTokenAvailable] = useState(false);
   const [gmailStatusLoaded, setGmailStatusLoaded] = useState(false);
   const [gmailSetupMessage, setGmailSetupMessage] = useState("");
   const [gmailEmail, setGmailEmail] = useState<string | null>(null);
@@ -75,10 +95,19 @@ function ImportContent() {
   const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
   const [modalConsent, setModalConsent] = useState(false);
   const [gmailMessage, setGmailMessage] = useState("");
-  const [selectedHistoryRange, setSelectedHistoryRange] = useState<"30d" | "45d">("45d");
+  const [selectedHistoryRange, setSelectedHistoryRange] =
+    useState<GmailHistoryRange>("13m");
+  const [gmailCoverage, setGmailCoverage] =
+    useState<GmailScanCoverage | null>(null);
+  const [gmailCoverageHistoryAvailable, setGmailCoverageHistoryAvailable] =
+    useState(true);
   const [gmailCandidates, setGmailCandidates] = useState<
     ConsolidatedSubscriptionCandidate[]
   >([]);
+  const [selectedGmailCandidateIds, setSelectedGmailCandidateIds] = useState<
+    Set<string>
+  >(new Set());
+  const [bulkGmailSaving, setBulkGmailSaving] = useState(false);
   const [expandedCandidateId, setExpandedCandidateId] = useState<string | null>(
     null
   );
@@ -102,16 +131,24 @@ function ImportContent() {
         return (await response.json()) as {
           configured: boolean;
           connected: boolean;
+          tokenAvailable?: boolean;
           email?: string | null;
           connectionId?: string | null;
           message?: string;
+          latestCoverage?: GmailScanCoverage | null;
+          coverageHistoryAvailable?: boolean;
         };
       })
       .then((status) => {
         if (!isCurrent || !status) return;
         setGmailConfigured(status.configured);
+        setGmailTokenAvailable(Boolean(status.tokenAvailable));
         setGmailConnected(status.connected);
         setGmailStatusLoaded(true);
+        setGmailCoverage(status.latestCoverage ?? null);
+        setGmailCoverageHistoryAvailable(
+          status.coverageHistoryAvailable !== false
+        );
         setGmailSetupMessage(status.message ?? "");
         if (status.email) setGmailEmail(status.email);
         setGmailConnectionId(status.connectionId ?? null);
@@ -130,7 +167,7 @@ function ImportContent() {
     if (oauthError) setErrorMessage(oauthError);
     if (searchParams.get("status") === "connected") {
       setGmailConnected(true);
-      setHasConsented(true);
+      setGmailTokenAvailable(true);
       setGmailMessage(
         "Gmail successfully connected! Choose your scan timeframe below and click 'Scan Gmail Inbox'."
       );
@@ -289,6 +326,16 @@ function ImportContent() {
         );
       }
 
+      if (gmailTokenAvailable) {
+        setGmailConnected(true);
+        setIsGmailModalOpen(false);
+        setModalConsent(false);
+        setGmailMessage(
+          "Updated 13-month Gmail consent saved. Your existing Gmail connection is ready to scan; Google authorization was not repeated."
+        );
+        return;
+      }
+
       const response = await fetch("/api/connectors/gmail/auth", {
         method: "POST",
       });
@@ -299,7 +346,6 @@ function ImportContent() {
       };
 
       if (data.configured && data.authUrl) {
-        setHasConsented(true);
         window.location.assign(data.authUrl);
       } else {
         setErrorMessage(
@@ -320,6 +366,8 @@ function ImportContent() {
     setErrorMessage("");
     setGmailMessage("");
     setGmailCandidates([]);
+    setSelectedGmailCandidateIds(new Set());
+    setGmailCoverage(null);
     setDismissedCandidateIds(new Set());
 
     try {
@@ -341,18 +389,34 @@ function ImportContent() {
         historyRange?: string;
         lanesScanned?: string[];
         warnings?: string[];
+        coverage?: GmailScanCoverage;
         error?: string;
         message?: string;
       };
 
       if (!response.ok || !data.success) {
+        if (data.coverage) setGmailCoverage(data.coverage);
         if (response.status === 401 && mode === "live") {
           setGmailConnected(false);
+          setGmailTokenAvailable(false);
         }
         throw new Error(data.error || "Could not scan Gmail.");
       }
 
-      setGmailCandidates(data.candidates ?? []);
+      const candidates = data.candidates ?? [];
+      setGmailCandidates(candidates);
+      setSelectedGmailCandidateIds(
+        new Set(
+          candidates
+            .filter(
+              (candidate) =>
+                candidate.status === "likely_active" &&
+                canBulkAddGmailCandidate(candidate)
+            )
+            .map((candidate) => candidate.id)
+        )
+      );
+      setGmailCoverage(data.coverage ?? null);
       setGmailMessage(
         [data.message || "Gmail scan complete.", ...(data.warnings ?? [])].join(
           " "
@@ -390,6 +454,7 @@ function ImportContent() {
         );
       }
       setGmailConnected(false);
+      setGmailTokenAvailable(false);
       setGmailEmail(null);
       setGmailConnectionId(null);
       setGmailCandidates([]);
@@ -437,7 +502,7 @@ function ImportContent() {
     setExtractedData({
       service_name: cand.service_name,
       plan_name: cand.plan_name || "Standard Plan",
-      amountRupees: cand.amount_rupees.toString(),
+      amountRupees: cand.amount_rupees?.toString() ?? "",
       billing_cycle: cand.billing_cycle,
       category: cand.category,
       renewal_date: cand.renewal_date || "",
@@ -450,6 +515,85 @@ function ImportContent() {
 
   const handleDismissCandidate = (id: string) => {
     setDismissedCandidateIds((prev) => new Set([...prev, id]));
+    setSelectedGmailCandidateIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const handleSaveSelectedGmailCandidates = async () => {
+    if (!hasConsented) {
+      setErrorMessage("Please accept the privacy consent before saving imported data.");
+      return;
+    }
+
+    const selected = activeCandidates
+      .filter(canBulkAddGmailCandidate)
+      .filter((candidate) => selectedGmailCandidateIds.has(candidate.id));
+    if (selected.length === 0) {
+      setErrorMessage("Select at least one likely active candidate to add.");
+      return;
+    }
+
+    const savedIds: string[] = [];
+    setBulkGmailSaving(true);
+    setErrorMessage("");
+
+    try {
+      for (const candidate of selected) {
+        await addSubscription({
+          household_id: household.id,
+          service_name: candidate.service_name,
+          plan_name: candidate.plan_name,
+          amount_paise: rupeesToPaise(candidate.amount_rupees),
+          billing_cycle: candidate.billing_cycle,
+          category: candidate.category,
+          payer_id: currentProfile.id,
+          user_ids: [currentProfile.id],
+          billing_channel: candidate.billing_channel,
+          renewal_date: candidate.renewal_date || undefined,
+          visibility: "full_details",
+          source: "import",
+          source_type: "gmail",
+          source_connection_id: gmailConnectionId ?? undefined,
+          imported_at: new Date().toISOString(),
+          is_active: true,
+          notes: `Imported via Gmail. Verified by ${currentProfile.name}.`,
+        });
+        savedIds.push(candidate.id);
+      }
+    } catch (error) {
+      if (savedIds.length > 0) {
+        const savedIdSet = new Set(savedIds);
+        setGmailCandidates((current) =>
+          current.filter((candidate) => !savedIdSet.has(candidate.id))
+        );
+        setSelectedGmailCandidateIds((current) =>
+          new Set(Array.from(current).filter((id) => !savedIdSet.has(id)))
+        );
+      }
+      setErrorMessage(
+        savedIds.length > 0
+          ? `Added ${savedIds.length} of ${selected.length} selected subscriptions. The remaining candidates are still available to review. ${
+              error instanceof Error ? error.message : "Check your subscription list before retrying."
+            }`
+          : error instanceof Error
+            ? error.message
+            : "Could not add the selected Gmail candidates."
+      );
+      return;
+    } finally {
+      setBulkGmailSaving(false);
+    }
+
+    const savedIdSet = new Set(savedIds);
+    setGmailCandidates((current) =>
+      current.filter((candidate) => !savedIdSet.has(candidate.id))
+    );
+    setSelectedGmailCandidateIds(new Set());
+    setScreenshotSavedCount(savedIds.length);
+    setSavedSuccess(true);
   };
 
   // 5. Confirm and save the selected screenshot entries.
@@ -570,6 +714,46 @@ function ImportContent() {
   const activeCandidates = gmailCandidates.filter(
     (c) => !dismissedCandidateIds.has(c.id)
   );
+  const selectableGmailCandidates = activeCandidates.filter(
+    canBulkAddGmailCandidate
+  );
+  const selectedGmailCandidateCount = selectableGmailCandidates.filter(
+    (candidate) => selectedGmailCandidateIds.has(candidate.id)
+  ).length;
+  const gmailCandidateGroups = [
+    {
+      title: "Likely active",
+      description:
+        "Receipt-backed candidates with a known price and billing interval. Ready items are selected by default; uncheck anything no longer active.",
+      candidates: activeCandidates.filter(
+        (candidate) => candidate.status === "likely_active"
+      ),
+      className:
+        "border-emerald-200 dark:border-emerald-900/70 bg-emerald-50/30 dark:bg-emerald-950/10",
+    },
+    {
+      title: "Needs confirmation",
+      description:
+        "Not preselected. Confirm the evidence and current status first; items with a known price and interval can then be selected, while incomplete items need individual review.",
+      candidates: activeCandidates.filter(
+        (candidate) => candidate.status === "needs_confirmation"
+      ),
+      className:
+        "border-amber-200 dark:border-amber-900/70 bg-amber-50/30 dark:bg-amber-950/10",
+    },
+    {
+      title: "Cancelled, expired, or payment failed",
+      description:
+        "Not selected for bulk import. Check for later renewals or reactivation before adding.",
+      candidates: activeCandidates.filter(
+        (candidate) =>
+          candidate.status === "cancelled_or_expired" ||
+          candidate.status === "payment_failed"
+      ),
+      className:
+        "border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/30",
+    },
+  ].filter((group) => group.candidates.length > 0);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -633,7 +817,7 @@ function ImportContent() {
                 Connect Gmail for the broadest subscription scan
               </h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-                We search only matching subscription, renewal, receipt, payment, and mandate emails from the past 30 or 45 days. This can find services billed directly to a card as well as store receipts.
+                We search matching subscription, renewal, receipt, payment, membership, and mandate emails within a selected window of up to 13 months. This can find services billed directly to a card as well as store receipts; scan coverage is shown for review.
               </p>
             </div>
             <button
@@ -715,7 +899,7 @@ function ImportContent() {
                         ? `Connected (${gmailEmail})`
                         : "Connected"
                       : gmailStatusLoaded
-                        ? gmailConfigured
+                        ? gmailConfigured || gmailTokenAvailable
                           ? "Not connected"
                           : "Setup required"
                         : "Checking setup"}
@@ -725,12 +909,15 @@ function ImportContent() {
                   Gmail Subscription Scan
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  A scan you start searches three billing-related lanes, up to 200 unique matches from the selected 30- or 45-day window. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
+                  A scan you start searches five subscription-related lanes, up to 200 unique matches from the selected window of up to 13 months. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
                 </p>
               </div>
 
               <div className="space-y-2">
-                {!gmailConnected && gmailStatusLoaded && !gmailConfigured && (
+                {!gmailConnected &&
+                  gmailStatusLoaded &&
+                  !gmailConfigured &&
+                  !gmailTokenAvailable && (
                   <p
                     role="status"
                     className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:text-amber-200"
@@ -742,19 +929,20 @@ function ImportContent() {
                 {gmailConnected && (
                   <div className="space-y-1.5 pb-1">
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                      Search timeframe (maximum 45 days):
+                      Search timeframe (maximum 13 months):
                     </label>
                     <select
                       value={selectedHistoryRange}
                       onChange={(e) =>
                         setSelectedHistoryRange(
-                          e.target.value as "30d" | "45d"
+                          e.target.value as GmailHistoryRange
                         )
                       }
                       className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200"
                     >
                       <option value="30d">Past 30 days</option>
                       <option value="45d">Past 45 days</option>
+                      <option value="13m">Past 13 months</option>
                     </select>
                   </div>
                 )}
@@ -768,7 +956,10 @@ function ImportContent() {
                   }
                   disabled={
                     gmailScanning ||
-                    (!gmailConnected && gmailStatusLoaded && !gmailConfigured)
+                    (!gmailConnected &&
+                      gmailStatusLoaded &&
+                      !gmailConfigured &&
+                      !gmailTokenAvailable)
                   }
                   className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-semibold transition flex items-center justify-center gap-1.5"
                 >
@@ -781,7 +972,9 @@ function ImportContent() {
                     ? "Searching matching emails..."
                     : gmailConnected
                       ? "Scan Gmail Inbox"
-                      : "Connect Gmail"}
+                      : gmailTokenAvailable
+                        ? "Review Updated Consent"
+                        : "Connect Gmail"}
                 </button>
 
                 <button
@@ -826,6 +1019,81 @@ function ImportContent() {
             </div>
           )}
 
+          {!gmailCoverageHistoryAvailable && (
+            <p
+              role="status"
+              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+            >
+              Previous Gmail scan coverage could not be loaded. New results will
+              show whether their coverage was recorded.
+            </p>
+          )}
+
+          {gmailCoverage && (
+            <section
+              aria-label="Gmail scan coverage"
+              className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Gmail scan coverage
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {new Date(gmailCoverage.windowStart).toLocaleDateString()}–
+                    {new Date(gmailCoverage.windowEnd).toLocaleDateString()} ·{" "}
+                    {gmailCoverage.historyRange === "13m"
+                      ? "13 months"
+                      : gmailCoverage.historyRange === "30d"
+                        ? "30 days"
+                        : "45 days"}
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                    gmailCoverage.paginationComplete
+                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                      : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  }`}
+                >
+                  {gmailCoverage.paginationComplete
+                    ? "Search completed"
+                    : "Partial coverage"}
+                </span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                {gmailCoverage.pagesFetched} pages ·{" "}
+                {gmailCoverage.messagesMatched} search matches ·{" "}
+                {gmailCoverage.uniqueMessagesSelected} unique messages selected ·{" "}
+                {gmailCoverage.messagesFetched} fetched for processing
+                {gmailCoverage.messageFetchFailures > 0 &&
+                  ` · ${gmailCoverage.messageFetchFailures} fetch failures`}
+              </p>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {gmailCoverage.laneCoverage.map((lane) => (
+                  <div
+                    key={lane.key}
+                    className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 dark:bg-slate-800 px-2.5 py-2 text-[10px]"
+                  >
+                    <span className="font-medium text-slate-700 dark:text-slate-200">
+                      {lane.label}
+                    </span>
+                    <span className="text-slate-500 dark:text-slate-400">
+                      {lane.status.replace("_", " ")} · {lane.pagesFetched}{" "}
+                      {lane.pagesFetched === 1 ? "page" : "pages"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                Coverage is recorded without message bodies or IDs. Attachments
+                are not searched or processed.
+                {gmailCoverage.recorded === false &&
+                  " This scan's coverage could not be saved."}
+              </p>
+            </section>
+          )}
+
           {/* Multi-Lane Discovery Candidates Deck */}
           {activeCandidates.length > 0 && (
             <div className="space-y-4">
@@ -836,13 +1104,41 @@ function ImportContent() {
                     Subscription Candidates ({activeCandidates.length})
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Consolidated across Google Play, Apple, merchant invoices, and bank e-mandates. Review and confirm before adding.
+                    Consolidated across Google Play, Apple, merchant invoices, and bank e-mandates. Add ready, likely active items together; review uncertain or inactive items individually.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[11px] text-slate-400">
-                    Source evidence attached to each candidate
+                    {selectedGmailCandidateCount} selected
                   </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedGmailCandidateIds(
+                        new Set(
+                          selectableGmailCandidates
+                            .filter((candidate) => candidate.status === "likely_active")
+                            .map((candidate) => candidate.id)
+                        )
+                      )
+                    }
+                    disabled={
+                      !selectableGmailCandidates.some(
+                        (candidate) => candidate.status === "likely_active"
+                      ) || bulkGmailSaving
+                    }
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    Select likely active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedGmailCandidateIds(new Set())}
+                    disabled={selectedGmailCandidateCount === 0 || bulkGmailSaving}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    Clear selection
+                  </button>
                 </div>
               </div>
 
@@ -854,15 +1150,35 @@ function ImportContent() {
                 </span>
               </div>
 
-              <div className="space-y-3">
-                {activeCandidates.map((cand) => {
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                Ready likely-active candidates are selected by default. Uncheck
+                anything that is no longer active. Uncertain candidates are
+                unselected; checking one with complete details confirms that
+                you reviewed its evidence and consider it active. Cancelled or
+                failed candidates stay out of bulk import.
+              </p>
+
+              <div className="space-y-5">
+                {gmailCandidateGroups.map((group) => (
+                  <section key={group.title} className="space-y-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                        {group.title} ({group.candidates.length})
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {group.description}
+                      </p>
+                    </div>
+                    <div className="space-y-3">
+                {group.candidates.map((cand) => {
                   const isExpanded = expandedCandidateId === cand.id;
                   const hasUnknownCycle = cand.billing_cycle === "unknown";
+                  const canBulkAdd = canBulkAddGmailCandidate(cand);
 
                   return (
                     <article
                       key={cand.id}
-                      className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-3 hover:border-slate-300 dark:hover:border-slate-700 transition"
+                      className={`bg-white dark:bg-slate-900 border rounded-2xl p-5 shadow-sm space-y-3 transition ${group.className}`}
                     >
                       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                         <div>
@@ -916,7 +1232,7 @@ function ImportContent() {
 
                         <div className="text-left sm:text-right">
                           <div className="text-lg font-black text-slate-900 dark:text-white">
-                            {cand.amount_rupees > 0 ? (
+                            {cand.amount_rupees && cand.amount_rupees > 0 ? (
                               <>
                                 ₹{cand.amount_rupees}
                                 <span className="text-xs font-medium text-slate-500 ml-1">
@@ -925,7 +1241,9 @@ function ImportContent() {
                               </>
                             ) : (
                               <span className="text-sm text-slate-500">
-                                Variable / Cap only
+                                {cand.mandate_details?.max_amount_rupees
+                                  ? "Variable / Cap only"
+                                  : "Price unknown"}
                               </span>
                             )}
                           </div>
@@ -1043,7 +1361,36 @@ function ImportContent() {
                       </div>
 
                       {/* Card Action Buttons */}
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                        <div>
+                          {canBulkAdd ? (
+                            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selectedGmailCandidateIds.has(cand.id)}
+                                disabled={bulkGmailSaving}
+                                onChange={(event) =>
+                                  setSelectedGmailCandidateIds((current) => {
+                                    const next = new Set(current);
+                                    if (event.target.checked) next.add(cand.id);
+                                    else next.delete(cand.id);
+                                    return next;
+                                  })
+                                }
+                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                              {cand.status === "needs_confirmation"
+                                ? "I confirmed this is active"
+                                : "Add in bulk"}
+                            </label>
+                          ) : cand.status === "likely_active" ? (
+                            <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                              {cand.is_possible_duplicate
+                                ? "Possible household duplicate — review before adding"
+                                : "Confirm price and interval before adding"}
+                            </span>
+                          ) : null}
+                        </div>
                         <button
                           type="button"
                           onClick={() => handleDismissCandidate(cand.id)}
@@ -1054,6 +1401,7 @@ function ImportContent() {
                         <button
                           type="button"
                           onClick={() => handleReviewCandidate(cand)}
+                          disabled={bulkGmailSaving}
                           className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition flex items-center gap-1.5"
                         >
                           <span>Review & Add</span>
@@ -1063,6 +1411,22 @@ function ImportContent() {
                     </article>
                   );
                 })}
+                    </div>
+                  </section>
+                ))}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSaveSelectedGmailCandidates}
+                  disabled={selectedGmailCandidateCount === 0 || bulkGmailSaving}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition disabled:opacity-50"
+                >
+                  {bulkGmailSaving
+                    ? "Adding selected subscriptions..."
+                    : `Add ${selectedGmailCandidateCount} selected subscription${selectedGmailCandidateCount === 1 ? "" : "s"}`}
+                </button>
               </div>
             </div>
           )}
@@ -1462,7 +1826,7 @@ function ImportContent() {
                   Connect Gmail for Subscription Discovery
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Read-only keyword search, limited to the past 30 or 45 days
+                  Read-only keyword search, limited by the app to a maximum of 13 months
                 </p>
               </div>
             </div>
@@ -1475,10 +1839,10 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. Each scan you start searches the last 30 or 45 days across billing-related keywords, skips spam and trash, and processes no more than 200 unique matching messages. A match may contain unrelated text.
+                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches up to 13 months across five subscription-related search categories, skips spam and trash, and processes no more than 200 unique matching messages. A match may contain unrelated text.
                 </li>
                 <li>
-                  <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; this statement does not mean message data never leaves your device or that Google limits the scope to recent messages.
+                  <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; aggregate scan coverage is saved to your account and retained until you delete your account. Withdrawing consent stops future scans but does not delete prior coverage. This does not mean message data never leaves your device or that Google limits the scope to recent messages.
                 </li>
                 <li>
                   <strong>Manual scans only:</strong> We do not run background scans. The app requests only Gmail read-only scope and does not send, alter, or delete email.
@@ -1498,13 +1862,13 @@ function ImportContent() {
                 className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
               />
               <span>
-                I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above.
+                I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above, including the 13-month search window and aggregate coverage recording.
               </span>
             </label>
 
             {/* Connection Options */}
             <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-              {gmailConfigured ? (
+              {gmailConfigured || gmailTokenAvailable ? (
                 <button
                   type="button"
                   onClick={handleStartGoogleOAuth}
@@ -1512,7 +1876,11 @@ function ImportContent() {
                   className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-black dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-semibold text-xs shadow-sm transition disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   <Mail className="w-4 h-4" />
-                  <span>Authorize with Google Account</span>
+                  <span>
+                    {gmailTokenAvailable
+                      ? "Accept Updated Consent"
+                      : "Authorize with Google Account"}
+                  </span>
                 </button>
               ) : (
                 <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200 space-y-1.5">

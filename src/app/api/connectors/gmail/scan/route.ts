@@ -9,6 +9,7 @@ import {
 import {
   GmailApiError,
   MAX_GMAIL_SCANS_PER_DAY,
+  getGmailHistoryRangeLabel,
   getSampleConsolidatedCandidates,
   normalizeGmailHistoryRange,
   searchGmailMultiLane,
@@ -18,7 +19,7 @@ import {
   hasCurrentGmailConsent,
   isGmailEnabledForUser,
 } from "@/lib/connectors/gmail-policy";
-import { Subscription } from "@/types";
+import { GmailHistoryRange, GmailScanCoverage, Subscription } from "@/types";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -84,18 +85,71 @@ async function handleGet() {
   const configured = Boolean(
     isSupabaseConfigured && hasGoogleConfiguration && gmailEnabled
   );
+  const validSessionToken = Boolean(
+    session?.googleAccessToken &&
+      session.tokenExpiry &&
+      session.tokenExpiry > Date.now() + 60_000
+  );
   const connected = Boolean(
-    configured &&
+    gmailEnabled &&
     consented &&
     session &&
     !session.isDemo &&
-    session.userId === userId
+    session.userId === userId &&
+    validSessionToken
   );
+  const tokenAvailable = Boolean(
+    isSupabaseConfigured &&
+    gmailEnabled &&
+    session &&
+    !session.isDemo &&
+    session.userId === userId &&
+    validSessionToken
+  );
+  let latestCoverage: GmailScanCoverage | null = null;
+  let coverageHistoryAvailable = true;
+  if (userId && gmailEnabled && consented) {
+    const { data: row, error: coverageReadError } = await createSupabaseServerClient()
+      .from("gmail_scan_coverage")
+      .select(
+        "id, history_range, window_start, window_end, pages_fetched, messages_matched, unique_messages_selected, messages_attempted, messages_fetched, message_fetch_failures, pagination_complete, truncated, attachments_scanned, lane_coverage, created_at"
+      )
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (coverageReadError) {
+      console.error("Could not read Gmail scan coverage:", coverageReadError);
+      coverageHistoryAvailable = false;
+    } else if (row) {
+      latestCoverage = {
+        id: row.id,
+        historyRange: row.history_range as GmailHistoryRange,
+        windowStart: row.window_start,
+        windowEnd: row.window_end,
+        pagesFetched: row.pages_fetched,
+        messagesMatched: row.messages_matched,
+        uniqueMessagesSelected: row.unique_messages_selected,
+        messagesAttempted: row.messages_attempted,
+        messagesFetched: row.messages_fetched,
+        messageFetchFailures: row.message_fetch_failures,
+        paginationComplete: row.pagination_complete,
+        truncated: row.truncated,
+        attachmentsScanned: false,
+        laneCoverage: row.lane_coverage as GmailScanCoverage["laneCoverage"],
+        recorded: true,
+        createdAt: row.created_at,
+      };
+    }
+  }
 
   return NextResponse.json({
     configured,
     gmailEnabled,
     connected,
+    tokenAvailable,
+    latestCoverage,
+    coverageHistoryAvailable,
     email: connected ? session?.email ?? null : null,
     connectionId:
       connected && session
@@ -107,7 +161,7 @@ async function handleGet() {
         ? "Gmail discovery is disabled for this account by the server release gate."
       : !consented
         ? "Review the Gmail disclosure and consent before connecting."
-      : !hasGoogleConfiguration
+      : !hasGoogleConfiguration && !tokenAvailable
         ? "Live Gmail linking needs server OAuth and session-encryption settings."
         : undefined,
   }, { headers: { "Cache-Control": "no-store" } });
@@ -225,10 +279,11 @@ async function handlePost(request: Request) {
   if (
     body.historyRange !== undefined &&
     body.historyRange !== "30d" &&
-    body.historyRange !== "45d"
+    body.historyRange !== "45d" &&
+    body.historyRange !== "13m"
   ) {
     return NextResponse.json(
-      { success: false, error: "Choose a 30-day or 45-day Gmail history window." },
+      { success: false, error: "Choose a 30-day, 45-day, or 13-month Gmail history window." },
       { status: 400, headers: { "Cache-Control": "no-store" } }
     );
   }
@@ -251,6 +306,8 @@ async function handlePost(request: Request) {
       lanesScanned: [
         "Store Receipts & Renewals",
         "Direct Merchant Invoices",
+        "Known Merchant Payments",
+        "Memberships, Trials & Activations",
         "Bank E-Mandates & Alerts",
       ],
       message: "Showing sample discovery candidates across Google Play, Apple, direct billing, and HDFC e-mandate. No live Gmail inbox was scanned.",
@@ -365,8 +422,99 @@ async function handlePost(request: Request) {
       existingSubscriptions: body.existingSubscriptions,
     };
 
-    const { candidates, totalMessagesScanned, lanesScanned, warnings } =
-      await searchGmailMultiLane(accessToken, scanOptions);
+    const scanResult = await searchGmailMultiLane(accessToken, scanOptions);
+    const {
+      candidates,
+      totalMessagesScanned,
+      lanesScanned,
+      warnings,
+      coverage,
+      fatalErrorStatus,
+    } = scanResult;
+    const coverageWarnings = [...warnings];
+    const { data: coverageId, error: coverageError } = await supabase.rpc(
+      "record_own_gmail_scan_coverage",
+      {
+        p_history_range: coverage.historyRange,
+        p_window_start: coverage.windowStart,
+        p_window_end: coverage.windowEnd,
+        p_pages_fetched: coverage.pagesFetched,
+        p_messages_matched: coverage.messagesMatched,
+        p_unique_messages_selected: coverage.uniqueMessagesSelected,
+        p_messages_attempted: coverage.messagesAttempted,
+        p_messages_fetched: coverage.messagesFetched,
+        p_message_fetch_failures: coverage.messageFetchFailures,
+        p_pagination_complete: coverage.paginationComplete,
+        p_truncated: coverage.truncated,
+        p_lane_coverage: coverage.laneCoverage,
+      }
+    );
+    const coverageRecorded =
+      !coverageError && typeof coverageId === "string";
+    const responseCoverage = {
+      ...coverage,
+      id: typeof coverageId === "string" ? coverageId : undefined,
+      recorded: coverageRecorded,
+    };
+    if (!coverageRecorded) {
+      if (coverageError) {
+        console.error("Could not record Gmail scan coverage:", coverageError);
+      }
+      coverageWarnings.push(
+        "Scan coverage could not be saved to your account."
+      );
+    }
+
+    const laneAuthenticationFailure = coverage.laneCoverage.some(
+      (lane) => lane.status === "failed" && lane.errorStatus === 401
+    );
+    const allSearchLanesFailed = coverage.laneCoverage.every(
+      (lane) => lane.status === "failed"
+    );
+    const allSearchLanesForbidden =
+      allSearchLanesFailed &&
+      coverage.laneCoverage.some((lane) => lane.errorStatus === 403);
+    if (fatalErrorStatus === 401 || laneAuthenticationFailure) {
+      const response = NextResponse.json(
+        {
+          success: false,
+          error: "Gmail authorization expired. Please reconnect your account.",
+          coverage: responseCoverage,
+          warnings: coverageWarnings,
+        },
+        { status: 401, headers: { "Cache-Control": "no-store" } }
+      );
+      clearSessionCookie(response);
+      return response;
+    }
+
+    if (fatalErrorStatus === 403 || allSearchLanesForbidden) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Google denied Gmail access. Verify that the Gmail API is enabled and that the Gmail read-only scope is authorized.",
+          coverage: responseCoverage,
+          warnings: coverageWarnings,
+        },
+        { status: 502, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    if (
+      lanesScanned.length === 0 &&
+      allSearchLanesFailed
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Gmail could not complete any search categories. Please try again later.",
+          coverage: responseCoverage,
+          warnings: coverageWarnings,
+        },
+        { status: 502, headers: { "Cache-Control": "no-store" } }
+      );
+    }
     const safeCandidates = candidates.map((candidate) => ({
       ...candidate,
       billing_channel: candidate.billing_channel.replace(
@@ -407,11 +555,12 @@ async function handlePost(request: Request) {
       totalMessagesScanned,
       historyRange: scanOptions.historyRange,
       lanesScanned,
-      warnings,
+      warnings: coverageWarnings,
+      coverage: responseCoverage,
       message:
         candidates.length > 0
-          ? `Discovered ${candidates.length} likely subscription candidates from ${totalMessagesScanned} keyword-matched emails in the past ${historyRange === "30d" ? "30" : "45"} days. Review each candidate before saving.`
-          : `Checked ${totalMessagesScanned} keyword-matched emails from the past ${historyRange === "30d" ? "30" : "45"} days across ${lanesScanned.length} lanes, but found no recurring subscription receipts.`,
+          ? `Discovered ${candidates.length} likely subscription candidates from ${totalMessagesScanned} keyword-matched emails in the past ${getGmailHistoryRangeLabel(historyRange)}. Review each candidate before saving.`
+          : `Checked ${totalMessagesScanned} keyword-matched emails from the past ${getGmailHistoryRangeLabel(historyRange)} across ${lanesScanned.length} lanes, but found no recurring subscription receipts.`,
     }, { headers: { "Cache-Control": "no-store" } });
     setSessionCookie(response, session);
     return response;

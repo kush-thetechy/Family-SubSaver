@@ -4,6 +4,9 @@ import {
   DiscoveryEvidence,
   DiscoveryEvidenceType,
   CandidateSubscriptionStatus,
+  GmailHistoryRange,
+  GmailScanCoverage,
+  GmailScanLaneCoverage,
 } from "@/types";
 import { rupeesToPaise } from "../calculations";
 
@@ -48,14 +51,30 @@ interface ServiceDescriptor {
 export const KNOWN_SERVICES: ServiceDescriptor[] = [
   { name: "Netflix", category: "ott", keywords: ["netflix"] },
   { name: "Spotify", category: "music", keywords: ["spotify"] },
+  { name: "Perplexity", category: "ai", keywords: ["perplexity"] },
+  { name: "Google AI Pro", category: "ai", keywords: ["google ai pro"] },
+  { name: "Truecaller", category: "utilities", keywords: ["truecaller"] },
+  { name: "Proton VPN", category: "utilities", keywords: ["proton vpn", "protonvpn"] },
+  { name: "Speechify", category: "utilities", keywords: ["speechify"] },
+  { name: "Brilliant", category: "utilities", keywords: ["brilliant.org", "brilliant premium"] },
+  { name: "Loom", category: "utilities", keywords: ["loom business", "loom.com"] },
+  { name: "Lovable", category: "utilities", keywords: ["lovable.dev", "lovable labs"] },
+  { name: "Wispr Flow", category: "utilities", keywords: ["wispr flow"] },
+  { name: "NBA League Pass", category: "gaming", keywords: ["nba league pass"] },
+  { name: "V2T Whisper", category: "utilities", keywords: ["v2t", "whisper ai transcription"] },
+  { name: "ExpressVPN", category: "utilities", keywords: ["expressvpn"] },
+  { name: "Zomato Gold", category: "other", keywords: ["zomato gold"] },
   {
     name: "Disney+ Hotstar",
     category: "ott",
     keywords: ["hotstar", "disney plus", "disney+"],
   },
   { name: "YouTube Premium", category: "ott", keywords: ["youtube premium"] },
+  { name: "Apple One", category: "ott", keywords: ["apple one"] },
+  { name: "iCloud+", category: "cloud", keywords: ["icloud+"] },
   { name: "Google One", category: "cloud", keywords: ["google one"] },
-  { name: "ChatGPT", category: "ai", keywords: ["chatgpt", "openai"] },
+  { name: "ChatGPT", category: "ai", keywords: ["chatgpt"] },
+  { name: "OpenAI", category: "ai", keywords: ["openai"] },
   { name: "Claude", category: "ai", keywords: ["claude.ai", "anthropic"] },
   { name: "Apple", category: "other", keywords: ["apple.com", "apple services", "apple store"] },
   { name: "Amazon Prime Video", category: "ott", keywords: ["prime video", "amazon prime"] },
@@ -286,6 +305,26 @@ export function parseDateToIso(dateStr: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function parseAppleRenewalDate(
+  renewalText: string,
+  emailDate: string
+): string | undefined {
+  if (/\b\d{4}\b/.test(renewalText)) {
+    return parseDateToIso(renewalText);
+  }
+
+  const emailDateIso = parseDateToIso(emailDate);
+  if (!emailDateIso) return undefined;
+
+  const emailYear = Number(emailDateIso.slice(0, 4));
+  const renewalDate = parseDateToIso(`${renewalText} ${emailYear}`);
+  if (!renewalDate) return undefined;
+
+  return renewalDate <= emailDateIso
+    ? parseDateToIso(`${renewalText} ${emailYear + 1}`)
+    : renewalDate;
 }
 
 export function addCycleToDate(isoDate: string, cycle: BillingCycle | "unknown"): string {
@@ -562,6 +601,9 @@ export function parseAppleReceipt(
     sender,
     subject,
     date: parseDateToIso(emailDate),
+    renewal_date: renewalText
+      ? parseAppleRenewalDate(renewalText, emailDate)
+      : undefined,
     amount_rupees: amountRupees,
     currency: "INR",
     billing_channel: "Apple",
@@ -743,6 +785,8 @@ export function parseGeneralGmailMessage(
     evidenceType = "pre_debit_notice";
   } else if (/\b(debited|spent|transacted|transaction alert)\b/i.test(lower) && !/\binvoice\b/i.test(lower)) {
     evidenceType = "transaction_alert";
+  } else if (hasAnyKeyword(lower, SERVICE_LIFECYCLE_KEYWORDS)) {
+    evidenceType = "service_event";
   }
 
   // Find Service
@@ -756,11 +800,16 @@ export function parseGeneralGmailMessage(
 
   // Find Amount (explicit INR)
   const amountRupees = findInrAmount(clean);
-  if (!amountRupees && evidenceType !== "cancellation_notice") {
+  if (
+    !amountRupees &&
+    evidenceType !== "cancellation_notice" &&
+    evidenceType !== "service_event"
+  ) {
     return null;
   }
 
   if (!matchedService) {
+    if (evidenceType === "service_event") return null;
     const merchantMatch = clean.match(/(?:at|to|for|towards|merchant:?)\s+([A-Za-z0-9&.\s]{3,30})(?:\s+on|\s+via|\s+ref|\s+dated|$)/i);
     if (merchantMatch && merchantMatch[1].trim()) {
       matchedService = normalizeServiceName(merchantMatch[1].trim());
@@ -784,7 +833,7 @@ export function parseGeneralGmailMessage(
     billing_channel: "Direct Email Invoice",
     merchant_raw: matchedService,
     frequency_raw: cycle !== "unknown" ? cycle : undefined,
-    summary: `${matchedService} email notice (${evidenceType.replace(/_/g, " ")}): ₹${amountRupees ?? 0}${cycle !== "unknown" ? `/${cycle}` : ""}.`,
+    summary: `${matchedService} email notice (${evidenceType.replace(/_/g, " ")}): ${amountRupees ? `₹${amountRupees}` : "amount unknown"}${cycle !== "unknown" ? `/${cycle}` : ""}.`,
   };
 }
 
@@ -838,9 +887,9 @@ export function consolidateEvidenceToCandidates(
       }
 
       // Check renewal date
-      let renewalDate: string | undefined;
+      let renewalDate = ev.renewal_date;
       let renewalInferred = false;
-      if (ev.date && cycle !== "unknown") {
+      if (!renewalDate && ev.date && cycle !== "unknown") {
         renewalDate = addCycleToDate(ev.date, cycle);
         renewalInferred = true;
       }
@@ -848,6 +897,9 @@ export function consolidateEvidenceToCandidates(
       const needsReview: string[] = [];
       if (cycle === "unknown") {
         needsReview.push("Billing cycle is unknown and needs confirmation");
+      }
+      if (!ev.amount_rupees) {
+        needsReview.push("Price is unknown; confirm the current amount before saving");
       }
       if (ev.evidence_type === "mandate_registration") {
         needsReview.push("Mandate registered; confirm if service is currently active");
@@ -861,7 +913,7 @@ export function consolidateEvidenceToCandidates(
         service_name: normService,
         plan_name: ev.plan_name || (ev.merchant_raw !== normService ? ev.merchant_raw : undefined),
         category: inferCategory(normService, ev.summary),
-        amount_rupees: ev.amount_rupees ?? 0,
+        amount_rupees: ev.amount_rupees,
         currency: "INR",
         billing_cycle: cycle,
         billing_channel: ev.billing_channel || "Email receipt",
@@ -875,7 +927,12 @@ export function consolidateEvidenceToCandidates(
           frequency: ev.frequency_raw,
           card_last4: ev.last4,
         } : undefined,
-        confidence: ev.evidence_type === "store_receipt" ? 0.95 : 0.85,
+        confidence:
+          ev.evidence_type === "store_receipt"
+            ? 0.95
+            : ev.evidence_type === "service_event"
+              ? 0.7
+              : 0.85,
         needs_review_reasons: needsReview,
         evidence: [ev],
       });
@@ -901,20 +958,29 @@ export function consolidateEvidenceToCandidates(
       }
 
       // Upgrade amount if candidate had 0 or was undefined
-      if (cand.amount_rupees <= 0 && ev.amount_rupees && ev.amount_rupees > 0) {
+      if (
+        (!cand.amount_rupees || cand.amount_rupees <= 0) &&
+        ev.amount_rupees &&
+        ev.amount_rupees > 0
+      ) {
         cand.amount_rupees = ev.amount_rupees;
       }
 
       // Upgrade billing cycle if candidate was unknown
       if (cand.billing_cycle === "unknown" && ev.frequency_raw && ev.frequency_raw !== "unknown") {
         cand.billing_cycle = ev.frequency_raw as BillingCycle;
-        if (cand.charge_date) {
+        if (!ev.renewal_date && cand.charge_date) {
           cand.renewal_date = addCycleToDate(cand.charge_date, cand.billing_cycle);
           cand.renewal_date_inferred = true;
         }
         cand.needs_review_reasons = cand.needs_review_reasons.filter(
           (r) => !r.includes("Billing cycle is unknown")
         );
+      }
+
+      if (ev.renewal_date) {
+        cand.renewal_date = ev.renewal_date;
+        cand.renewal_date_inferred = false;
       }
 
       // If a cancellation notice arrives, update status
@@ -970,13 +1036,37 @@ export interface ScanOptions {
   existingSubscriptions?: Subscription[];
 }
 
-export type GmailHistoryRange = "30d" | "45d";
-
 export const MAX_GMAIL_MESSAGES_PER_SCAN = 200;
+const MAX_GMAIL_PAGES_PER_LANE = 100;
 
-/** Clamp every caller, including direct API requests, to the supported 30–45 day window. */
 export function normalizeGmailHistoryRange(value?: unknown): GmailHistoryRange {
-  return value === "30d" ? "30d" : "45d";
+  return value === "30d" || value === "13m" ? value : "45d";
+}
+
+export function getGmailHistoryRangeLabel(range: GmailHistoryRange): string {
+  if (range === "13m") return "13 months";
+  return range === "30d" ? "30 days" : "45 days";
+}
+
+export function getGmailHistoryWindow(
+  range: GmailHistoryRange,
+  now = new Date()
+): { start: Date; end: Date } {
+  const end = new Date(now);
+  if (range !== "13m") {
+    const days = range === "30d" ? 30 : 45;
+    return { start: new Date(end.getTime() - days * 24 * 60 * 60 * 1000), end };
+  }
+
+  const start = new Date(end);
+  const day = start.getUTCDate();
+  start.setUTCDate(1);
+  start.setUTCMonth(start.getUTCMonth() - 13);
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  start.setUTCDate(Math.min(day, lastDayOfTargetMonth));
+  return { start, end };
 }
 
 const STORE_SUBSCRIPTION_KEYWORDS = [
@@ -1025,6 +1115,12 @@ const SUBSCRIPTION_EVENT_KEYWORDS = [
   "annual plan",
   "annual subscription",
   "yearly plan",
+  "membership",
+  "activated",
+  "upgraded",
+  "welcome to",
+  "trial started",
+  "service active",
 ];
 
 const BILLING_KEYWORDS = [
@@ -1044,6 +1140,37 @@ const BILLING_KEYWORDS = [
   "membership expired",
   "cancelled",
   "canceled",
+  "paid",
+  "debited",
+  "transaction",
+  "purchase",
+  "renewal",
+];
+
+const SERVICE_LIFECYCLE_KEYWORDS = [
+  "welcome to",
+  "activated",
+  "upgraded",
+  "membership",
+  "trial started",
+  "trial begins",
+  "plan includes",
+  "service active",
+  "renewed",
+  "renewal",
+];
+
+const PAYMENT_ACTIVITY_KEYWORDS = [
+  "paid",
+  "payment",
+  "debited",
+  "charged",
+  "purchase",
+  "transaction",
+  "invoice",
+  "receipt",
+  "renewed",
+  "renewal",
 ];
 
 const MANDATE_KEYWORDS = [
@@ -1072,6 +1199,8 @@ const MANDATE_KEYWORDS = [
 
 const KNOWN_PROVIDER_SEARCH_TERMS = Array.from(
   new Set(KNOWN_SERVICES.flatMap((service) => service.keywords))
+).filter(
+  (term) => !["apple.com", "apple services", "apple store"].includes(term)
 );
 
 function gmailAnyOf(terms: string[]): string {
@@ -1096,6 +1225,19 @@ function hasSubscriptionEmailKeywords(message: GmailMessage): boolean {
   ).toLowerCase();
 
   if (hasAnyKeyword(searchableText, MANDATE_KEYWORDS)) return true;
+
+  const mentionsKnownService = KNOWN_SERVICES.some((service) =>
+    service.keywords.some((keyword) => searchableText.includes(keyword))
+  );
+  if (
+    mentionsKnownService &&
+    hasAnyKeyword(searchableText, [
+      ...BILLING_KEYWORDS,
+      ...SERVICE_LIFECYCLE_KEYWORDS,
+    ])
+  ) {
+    return true;
+  }
 
   const hasBillingSignal = hasAnyKeyword(searchableText, BILLING_KEYWORDS);
   const hasSubscriptionSignal = hasAnyKeyword(searchableText, [
@@ -1161,8 +1303,8 @@ export async function fetchGmailJson<T>(url: string, accessToken: string): Promi
 }
 
 /**
- * Searches across multiple keyword lanes, paginates all matching IDs within the
- * selected recent window, parses matched messages in memory, and discards bodies.
+ * Searches bounded, independent discovery lanes, records pagination coverage,
+ * and parses matched message content in memory.
  */
 export async function searchGmailMultiLane(
   accessToken: string,
@@ -1172,27 +1314,47 @@ export async function searchGmailMultiLane(
   totalMessagesScanned: number;
   lanesScanned: string[];
   warnings: string[];
+  coverage: GmailScanCoverage;
+  fatalErrorStatus?: number;
 }> {
   const historyRange = normalizeGmailHistoryRange(options.historyRange);
-  const rangeDays = historyRange === "30d" ? 30 : 45;
-  const cutoffTime = Date.now() - rangeDays * 24 * 60 * 60 * 1000;
-  const dateFilter = `newer_than:${rangeDays}d -in:spam -in:trash `;
+  const historyWindow = getGmailHistoryWindow(historyRange);
+  const cutoffTime = historyWindow.start.getTime();
+  const dateFilter =
+    historyRange === "13m"
+      ? `after:${historyWindow.start.toISOString().slice(0, 10).replace(/-/g, "/")} -in:spam -in:trash `
+      : `newer_than:${historyRange === "30d" ? 30 : 45}d -in:spam -in:trash `;
   const billingTerms = gmailAnyOf(BILLING_KEYWORDS);
   const recurringTerms = gmailAnyOf(SUBSCRIPTION_EVENT_KEYWORDS);
   const knownProviderTerms = gmailAnyOf(KNOWN_PROVIDER_SEARCH_TERMS);
   const storeTerms = gmailAnyOf(STORE_SUBSCRIPTION_KEYWORDS);
   const mandateTerms = gmailAnyOf(MANDATE_KEYWORDS);
+  const lifecycleTerms = gmailAnyOf(SERVICE_LIFECYCLE_KEYWORDS);
+  const paymentActivityTerms = gmailAnyOf(PAYMENT_ACTIVITY_KEYWORDS);
 
   const lanes = [
     {
+      key: "store_receipts",
       name: "Store Receipts & Renewals",
       query: `${dateFilter}((from:googleplay-noreply@google.com OR from:no_reply@email.apple.com OR from:do_not_reply@apple.com OR subject:("Google Play Order Receipt" OR "receipt from Apple" OR "invoice from Apple")) ${storeTerms})`,
     },
     {
+      key: "direct_billing",
       name: "Direct Merchant Invoices",
       query: `${dateFilter}((${recurringTerms} ${billingTerms}) OR (${knownProviderTerms} ${billingTerms} ${gmailAnyOf(["subscription", "renewal", "renewed", "recurring", "monthly", "annual", "yearly", "auto-renew"])}))`,
     },
     {
+      key: "known_merchant_payments",
+      name: "Known Merchant Payments",
+      query: `${dateFilter}${knownProviderTerms} ${paymentActivityTerms}`,
+    },
+    {
+      key: "merchant_lifecycle",
+      name: "Memberships, Trials & Activations",
+      query: `${dateFilter}${knownProviderTerms} ${lifecycleTerms}`,
+    },
+    {
+      key: "bank_mandates",
       name: "Bank E-Mandates & Alerts",
       query: `${dateFilter}${mandateTerms}`,
     },
@@ -1200,19 +1362,25 @@ export async function searchGmailMultiLane(
 
   const uniqueMessageIds = new Set<string>();
   const warnings: string[] = [];
-  const failedSearchLanes: string[] = [];
-  const scannedLanes: string[] = [];
-  let successfulSearchLanes = 0;
-  let firstSearchError: unknown;
-  let truncated = false;
+  const laneCoverage: GmailScanLaneCoverage[] = lanes.map((lane) => ({
+    key: lane.key,
+    label: lane.name,
+    status: "not_started",
+    pagesFetched: 0,
+    messagesMatched: 0,
+    uniqueMessagesSelected: 0,
+  }));
 
   // Run paginated list across lanes. Gmail returns IDs here; full contents are
   // fetched only after a message has matched the keyword query.
   for (let laneIndex = 0; laneIndex < lanes.length; laneIndex += 1) {
     const lane = lanes[laneIndex];
+    const laneResult = laneCoverage[laneIndex];
     try {
       let pageToken: string | undefined;
-      do {
+      const seenPageTokens = new Set<string>();
+      while (laneResult.pagesFetched < MAX_GMAIL_PAGES_PER_LANE) {
+        if (uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN) break;
         const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         listUrl.searchParams.set("q", lane.query);
         listUrl.searchParams.set(
@@ -1225,43 +1393,63 @@ export async function searchGmailMultiLane(
           messages?: { id: string }[];
           nextPageToken?: string;
         }>(listUrl.toString(), accessToken);
+        laneResult.pagesFetched += 1;
+        laneResult.messagesMatched += listRes.messages?.length ?? 0;
 
         if (listRes.messages) {
           for (const message of listRes.messages) {
+            if (!message.id || uniqueMessageIds.has(message.id)) continue;
             uniqueMessageIds.add(message.id);
+            laneResult.uniqueMessagesSelected += 1;
             if (uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN) break;
           }
         }
         if (uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN) {
-          truncated = Boolean(
-            listRes.nextPageToken || laneIndex < lanes.length - 1
-          );
+          laneResult.status = listRes.nextPageToken ? "truncated" : "complete";
           break;
         }
-        pageToken = listRes.nextPageToken;
-      } while (pageToken);
-      successfulSearchLanes += 1;
-      scannedLanes.push(lane.name);
+        const nextPageToken = listRes.nextPageToken;
+        if (!nextPageToken) {
+          laneResult.status = "complete";
+          break;
+        }
+        if (seenPageTokens.has(nextPageToken)) {
+          laneResult.status = "truncated";
+          warnings.push(`${lane.name} returned a repeated page token.`);
+          break;
+        }
+        seenPageTokens.add(nextPageToken);
+        pageToken = nextPageToken;
+      }
+      if (
+        laneResult.status === "not_started" &&
+        laneResult.pagesFetched >= MAX_GMAIL_PAGES_PER_LANE
+      ) {
+        laneResult.status = "truncated";
+      }
     } catch (error) {
-      firstSearchError ??= error;
-      failedSearchLanes.push(lane.name);
+      laneResult.status = "failed";
+      laneResult.errorStatus =
+        error instanceof GmailApiError ? error.status : undefined;
     }
     if (uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN) {
       break;
     }
   }
 
-  if (successfulSearchLanes === 0 && firstSearchError) {
-    throw firstSearchError;
-  }
-  if (failedSearchLanes.length > 0) {
+  if (laneCoverage.some((lane) => lane.status === "failed")) {
     warnings.push(
-      "Some Gmail search categories could not be checked; results may be incomplete."
+      "Some Gmail search categories failed; coverage is incomplete."
     );
   }
-  if (truncated) {
+  if (
+    uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN ||
+    laneCoverage.some(
+      (lane) => lane.status === "truncated" || lane.status === "not_started"
+    )
+  ) {
     warnings.push(
-      `This scan reached the ${MAX_GMAIL_MESSAGES_PER_SCAN}-message limit; results may be incomplete.`
+      `Coverage is incomplete because the scan reached a pagination or ${MAX_GMAIL_MESSAGES_PER_SCAN}-message safety limit.`
     );
   }
 
@@ -1269,6 +1457,8 @@ export async function searchGmailMultiLane(
   const messageIdList = Array.from(uniqueMessageIds);
   const evidenceList: DiscoveryEvidence[] = [];
   let failedMessageFetches = 0;
+  let successfulMessageFetches = 0;
+  let fatalErrorStatus: number | undefined;
 
   for (let i = 0; i < messageIdList.length; i += 5) {
     const chunk = messageIdList.slice(i, i + 5);
@@ -1279,11 +1469,12 @@ export async function searchGmailMultiLane(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`,
             accessToken
           );
+          successfulMessageFetches += 1;
           const messageTimestamp = Number(msg.internalDate);
           if (
             !Number.isFinite(messageTimestamp) ||
             messageTimestamp < cutoffTime ||
-            messageTimestamp > Date.now() + 5 * 60 * 1000
+            messageTimestamp > historyWindow.end.getTime()
           ) {
             return null;
           }
@@ -1294,7 +1485,7 @@ export async function searchGmailMultiLane(
             error instanceof GmailApiError &&
             (error.status === 401 || error.status === 403)
           ) {
-            throw error;
+            fatalErrorStatus ??= error.status;
           }
           failedMessageFetches += 1;
           return null;
@@ -1305,23 +1496,57 @@ export async function searchGmailMultiLane(
     for (const ev of chunkResults) {
       if (ev) evidenceList.push(ev);
     }
+    if (fatalErrorStatus) break;
   }
   if (failedMessageFetches > 0) {
     warnings.push(
-      "Some matched Gmail messages could not be read; results may be incomplete."
+      "Some matched Gmail messages could not be read; coverage is incomplete."
     );
   }
+  warnings.push(
+    "Attachments are not fetched or parsed; coverage applies only to searchable message content."
+  );
 
   const candidates = consolidateEvidenceToCandidates(
     evidenceList,
     options.existingSubscriptions ?? []
   );
+  const coverage: GmailScanCoverage = {
+    historyRange,
+    windowStart: historyWindow.start.toISOString(),
+    windowEnd: historyWindow.end.toISOString(),
+    pagesFetched: laneCoverage.reduce((total, lane) => total + lane.pagesFetched, 0),
+    messagesMatched: laneCoverage.reduce(
+      (total, lane) => total + lane.messagesMatched,
+      0
+    ),
+    uniqueMessagesSelected: messageIdList.length,
+    messagesAttempted: fatalErrorStatus ? successfulMessageFetches + failedMessageFetches : messageIdList.length,
+    messagesFetched: successfulMessageFetches,
+    messageFetchFailures: failedMessageFetches,
+    paginationComplete:
+      laneCoverage.every((lane) => lane.status === "complete") &&
+      failedMessageFetches === 0 &&
+      !fatalErrorStatus &&
+      uniqueMessageIds.size < MAX_GMAIL_MESSAGES_PER_SCAN,
+    truncated:
+      uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN ||
+      laneCoverage.some(
+        (lane) => lane.status === "truncated" || lane.status === "not_started"
+      ),
+    attachmentsScanned: false,
+    laneCoverage,
+  };
 
   return {
     candidates,
     totalMessagesScanned: messageIdList.length,
-    lanesScanned: scannedLanes,
+    lanesScanned: laneCoverage
+      .filter((lane) => lane.status === "complete" || lane.status === "truncated")
+      .map((lane) => lane.label),
     warnings,
+    coverage,
+    fatalErrorStatus,
   };
 }
 
@@ -1465,7 +1690,15 @@ export function parseGmailMessage(message: GmailMessage) {
 
 export async function searchGmailInvoices(accessToken: string) {
   const { candidates } = await searchGmailMultiLane(accessToken);
-  return candidates.map((c) => ({
+  return candidates
+    .filter(
+      (candidate): candidate is ConsolidatedSubscriptionCandidate & {
+        amount_rupees: number;
+      } =>
+        typeof candidate.amount_rupees === "number" &&
+        candidate.amount_rupees > 0
+    )
+    .map((c) => ({
     id: c.id,
     service_name: c.service_name,
     plan_name: c.plan_name,
@@ -1479,5 +1712,5 @@ export async function searchGmailInvoices(accessToken: string) {
     email_date: c.charge_date || "",
     email_sender: c.evidence[0]?.sender || "",
     confidence: c.confidence,
-  }));
+    }));
 }
