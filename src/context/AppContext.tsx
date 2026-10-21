@@ -1,6 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import {
   Household,
   HouseholdMember,
@@ -20,9 +21,10 @@ import {
   SpendingSummary,
 } from "@/lib/calculations";
 import { generateSavingsRecommendations } from "@/lib/recommendations";
+import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase";
 
 interface AuditProgress {
-  score: number; // 0 to 100
+  score: number;
   label: string;
   isComplete: boolean;
   missingPayerCount: number;
@@ -32,6 +34,8 @@ interface AuditProgress {
 
 interface AppContextType {
   isDemoMode: boolean;
+  authUser: User | null;
+  accountError: string;
   isFamilyView: boolean;
   currentProfile: Profile;
   allProfiles: Profile[];
@@ -44,14 +48,18 @@ interface AppContextType {
   switchActiveProfile: (userId: string) => void;
   addSubscription: (
     sub: Omit<Subscription, "id" | "created_at" | "updated_at">
-  ) => void;
-  updateSubscription: (id: string, updates: Partial<Subscription>) => void;
-  deleteSubscription: (id: string) => void;
+  ) => Promise<void>;
+  updateSubscription: (
+    id: string,
+    updates: Partial<Subscription>
+  ) => Promise<void>;
+  deleteSubscription: (id: string) => Promise<void>;
   inviteMember: (name: string, email: string, role: MemberRole) => void;
   removeMember: (memberId: string) => void;
   resetDemoData: () => void;
   exportDataJson: () => string;
-  deleteAllHouseholdData: () => void;
+  deleteAllHouseholdData: () => Promise<void>;
+  signOut: () => Promise<string | null>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -61,98 +69,319 @@ const STORAGE_KEY_MEMBERS = "fss_members_v1";
 const STORAGE_KEY_USER = "fss_active_user_v1";
 const STORAGE_KEY_FAMILY_VIEW = "fss_family_view_v1";
 
+const EMPTY_PROFILE: Profile = {
+  id: "",
+  name: "Your account",
+  email: "",
+  created_at: "",
+};
+const EMPTY_HOUSEHOLD: Household = {
+  id: "",
+  name: "Your household",
+  created_by: "",
+  created_at: "",
+};
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [isDemoMode] = useState(true);
-  const [allProfiles, setAllProfiles] = useState<Profile[]>(DEMO_PROFILES);
-  const [household, setHousehold] = useState<Household>(DEMO_HOUSEHOLD);
-  const [members, setMembers] = useState<HouseholdMember[]>(DEMO_MEMBERS);
-  const [subscriptions, setSubscriptions] =
-    useState<Subscription[]>(DEMO_SUBSCRIPTIONS);
+  const isDemoMode = !isSupabaseConfigured;
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [accountError, setAccountError] = useState("");
+  const [allProfiles, setAllProfiles] = useState<Profile[]>(
+    isDemoMode ? DEMO_PROFILES : []
+  );
+  const [household, setHousehold] = useState<Household>(
+    isDemoMode ? DEMO_HOUSEHOLD : EMPTY_HOUSEHOLD
+  );
+  const [members, setMembers] = useState<HouseholdMember[]>(
+    isDemoMode ? DEMO_MEMBERS : []
+  );
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>(
+    isDemoMode ? DEMO_SUBSCRIPTIONS : []
+  );
   const [currentProfile, setCurrentProfile] = useState<Profile>(
-    DEMO_PROFILES[0]
+    isDemoMode ? DEMO_PROFILES[0] : EMPTY_PROFILE
   );
   const [isFamilyView, setIsFamilyView] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load from local storage on initial mount if available
   useEffect(() => {
-    try {
-      const savedSubs = localStorage.getItem(STORAGE_KEY_SUBS);
-      const savedMembers = localStorage.getItem(STORAGE_KEY_MEMBERS);
-      const savedUserId = localStorage.getItem(STORAGE_KEY_USER);
-      const savedFamilyView = localStorage.getItem(STORAGE_KEY_FAMILY_VIEW);
+    if (isDemoMode) {
+      try {
+        const savedSubs = localStorage.getItem(STORAGE_KEY_SUBS);
+        const savedMembers = localStorage.getItem(STORAGE_KEY_MEMBERS);
+        const savedUserId = localStorage.getItem(STORAGE_KEY_USER);
+        const savedFamilyView = localStorage.getItem(STORAGE_KEY_FAMILY_VIEW);
 
-      if (savedSubs) {
-        setSubscriptions(JSON.parse(savedSubs));
+        if (savedSubs) setSubscriptions(JSON.parse(savedSubs));
+        if (savedMembers) setMembers(JSON.parse(savedMembers));
+        if (savedUserId) {
+          const found = DEMO_PROFILES.find((profile) => profile.id === savedUserId);
+          if (found) setCurrentProfile(found);
+        }
+        setIsFamilyView(savedFamilyView === "true");
+      } catch {
+        setAccountError("Could not load demo data from this browser.");
+      } finally {
+        setIsLoaded(true);
       }
-      if (savedMembers) {
-        setMembers(JSON.parse(savedMembers));
-      }
-      if (savedUserId) {
-        const found = DEMO_PROFILES.find((p) => p.id === savedUserId);
-        if (found) setCurrentProfile(found);
-      }
-      setIsFamilyView(savedFamilyView === "true");
-    } catch {
-      // Local storage fallback
-    } finally {
-      setIsLoaded(true);
+      return;
     }
-  }, []);
 
-  // Sync to local storage
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setAccountError("Supabase is configured incompletely. Check the public URL and anon key.");
+      setIsLoaded(true);
+      return;
+    }
+
+    let isActive = true;
+    let loadRevision = 0;
+    let authEventReceived = false;
+    const clearAccountData = () => {
+      loadRevision += 1;
+      setAuthUser(null);
+      setCurrentProfile(EMPTY_PROFILE);
+      setAllProfiles([]);
+      setHousehold(EMPTY_HOUSEHOLD);
+      setMembers([]);
+      setSubscriptions([]);
+      setIsFamilyView(false);
+    };
+
+    const loadAccountData = async (user: User) => {
+      const revision = ++loadRevision;
+      setAuthUser(user);
+      setAccountError("");
+      setCurrentProfile({
+        id: user.id,
+        name:
+          user.user_metadata?.name || user.email?.split("@")[0] || "Account holder",
+        email: user.email ?? "",
+        created_at: user.created_at,
+      });
+      setAllProfiles([]);
+      setHousehold(EMPTY_HOUSEHOLD);
+      setMembers([]);
+      setSubscriptions([]);
+      setIsFamilyView(false);
+
+      try {
+        const { data: profileRow, error: profileError } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (profileError) throw profileError;
+
+        const { data: memberRow, error: memberError } = await supabase
+          .from("household_members")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("status", "active")
+          .maybeSingle();
+        if (memberError) throw memberError;
+        if (!memberRow) {
+          throw new Error(
+            "Your household is not set up yet. Apply the latest Supabase database migration and sign in again."
+          );
+        }
+
+        const { data: householdRow, error: householdError } = await supabase
+          .from("households")
+          .select("*")
+          .eq("id", memberRow.household_id)
+          .maybeSingle();
+        if (householdError) throw householdError;
+        if (!householdRow) {
+          throw new Error(
+            "Your household could not be loaded. Check its membership and database access policies."
+          );
+        }
+
+        const { data: subscriptionRows, error: subscriptionsError } =
+          await supabase
+            .from("subscriptions")
+            .select("*")
+            .eq("household_id", householdRow.id)
+            .order("created_at", { ascending: false });
+        if (subscriptionsError) throw subscriptionsError;
+        if (!isActive || revision !== loadRevision) return;
+
+        const profile: Profile = profileRow
+          ? (profileRow as Profile)
+          : {
+              id: user.id,
+              name:
+                user.user_metadata?.name ||
+                user.email?.split("@")[0] ||
+                "Account holder",
+              email: user.email ?? "",
+              created_at: user.created_at,
+            };
+        setCurrentProfile(profile);
+        setAllProfiles([profile]);
+        setHousehold(householdRow as Household);
+        setMembers([memberRow as HouseholdMember]);
+        setSubscriptions((subscriptionRows ?? []) as Subscription[]);
+      } catch (error) {
+        if (!isActive || revision !== loadRevision) return;
+        setAccountError(
+          error instanceof Error
+            ? error.message
+            : "Could not load your household data."
+        );
+        setSubscriptions([]);
+      } finally {
+        if (isActive && revision === loadRevision) setIsLoaded(true);
+      }
+    };
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      authEventReceived = true;
+      if (session?.user) {
+        void loadAccountData(session.user);
+      } else {
+        clearAccountData();
+        setAccountError("");
+        setIsLoaded(true);
+      }
+    });
+
+    void supabase.auth.getUser().then(({ data, error }) => {
+      if (!isActive || authEventReceived) return;
+      if (error) {
+        setAccountError(error.message);
+        setIsLoaded(true);
+      } else if (data.user) {
+        void loadAccountData(data.user);
+      } else {
+        clearAccountData();
+        setIsLoaded(true);
+      }
+    });
+
+    return () => {
+      isActive = false;
+      subscription.unsubscribe();
+    };
+  }, [isDemoMode]);
+
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isDemoMode || !isLoaded) return;
     try {
       localStorage.setItem(STORAGE_KEY_SUBS, JSON.stringify(subscriptions));
       localStorage.setItem(STORAGE_KEY_MEMBERS, JSON.stringify(members));
       localStorage.setItem(STORAGE_KEY_USER, currentProfile.id);
       localStorage.setItem(STORAGE_KEY_FAMILY_VIEW, String(isFamilyView));
     } catch {
-      // Ignore write errors
+      setAccountError("Could not save demo data to this browser.");
     }
-  }, [subscriptions, members, currentProfile, isFamilyView, isLoaded]);
+  }, [subscriptions, members, currentProfile, isFamilyView, isLoaded, isDemoMode]);
 
   const switchActiveProfile = (userId: string) => {
+    if (!isDemoMode) return;
     if (userId === "family") {
       setIsFamilyView(true);
       return;
     }
 
-    const user = allProfiles.find((p) => p.id === userId);
+    const user = allProfiles.find((profile) => profile.id === userId);
     if (user) {
       setCurrentProfile(user);
       setIsFamilyView(false);
     }
   };
 
-  const addSubscription = (
+  const addSubscription = async (
     sub: Omit<Subscription, "id" | "created_at" | "updated_at">
   ) => {
-    const newSub: Subscription = {
-      ...sub,
-      id: `sub-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    setSubscriptions((prev) => [newSub, ...prev]);
+    if (isDemoMode) {
+      const newSub: Subscription = {
+        ...sub,
+        id: `sub-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      setSubscriptions((previous) => [newSub, ...previous]);
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !authUser || !household.id) {
+      throw new Error("Your account or household is not ready to save subscriptions.");
+    }
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .insert({
+        ...sub,
+        household_id: household.id,
+        payer_id: authUser.id,
+        user_ids: [authUser.id],
+      })
+      .select("*")
+      .single();
+    if (error) throw error;
+    setSubscriptions((previous) => [data as Subscription, ...previous]);
   };
 
-  const updateSubscription = (id: string, updates: Partial<Subscription>) => {
-    setSubscriptions((prev) =>
-      prev.map((sub) =>
-        sub.id === id
-          ? { ...sub, ...updates, updated_at: new Date().toISOString() }
-          : sub
-      )
+  const updateSubscription = async (
+    id: string,
+    updates: Partial<Subscription>
+  ) => {
+    if (isDemoMode) {
+      setSubscriptions((previous) =>
+        previous.map((sub) =>
+          sub.id === id
+            ? { ...sub, ...updates, updated_at: new Date().toISOString() }
+            : sub
+        )
+      );
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !authUser) {
+      throw new Error("Your account is not ready to update subscriptions.");
+    }
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("payer_id", authUser.id)
+      .select("*")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error("Subscription not found or access was denied.");
+    setSubscriptions((previous) =>
+      previous.map((sub) => (sub.id === id ? (data as Subscription) : sub))
     );
   };
 
-  const deleteSubscription = (id: string) => {
-    setSubscriptions((prev) => prev.filter((sub) => sub.id !== id));
+  const deleteSubscription = async (id: string) => {
+    if (isDemoMode) {
+      setSubscriptions((previous) => previous.filter((sub) => sub.id !== id));
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !authUser) {
+      throw new Error("Your account is not ready to delete subscriptions.");
+    }
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .delete()
+      .eq("id", id)
+      .eq("payer_id", authUser.id)
+      .select("id");
+    if (error) throw error;
+    if (!data?.length) throw new Error("Subscription not found or access was denied.");
+    setSubscriptions((previous) => previous.filter((sub) => sub.id !== id));
   };
 
   const inviteMember = (name: string, email: string, role: MemberRole) => {
+    if (!isDemoMode) return;
     const newUserId = `user-${Date.now()}`;
     const newProfile: Profile = {
       id: newUserId,
@@ -170,15 +399,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       status: "active",
       joined_at: new Date().toISOString(),
     };
-    setAllProfiles((prev) => [...prev, newProfile]);
-    setMembers((prev) => [...prev, newMember]);
+    setAllProfiles((previous) => [...previous, newProfile]);
+    setMembers((previous) => [...previous, newMember]);
   };
 
   const removeMember = (memberId: string) => {
-    setMembers((prev) => prev.filter((m) => m.id !== memberId));
+    if (isDemoMode) {
+      setMembers((previous) => previous.filter((member) => member.id !== memberId));
+    }
   };
 
   const resetDemoData = () => {
+    if (!isDemoMode) return;
     setSubscriptions(DEMO_SUBSCRIPTIONS);
     setMembers(DEMO_MEMBERS);
     setAllProfiles(DEMO_PROFILES);
@@ -190,7 +422,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem(STORAGE_KEY_USER);
       localStorage.removeItem(STORAGE_KEY_FAMILY_VIEW);
     } catch {
-      // Ignore
+      setAccountError("Could not reset demo data in this browser.");
     }
   };
 
@@ -201,55 +433,88 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       viewer: isFamilyView ? "Whole family" : currentProfile.name,
       household,
       members,
-      subscriptions: subscriptions.filter((s) => {
-        if (isFamilyView) return s.visibility === "full_details";
-        // Enforce privacy during export: hidden subs of others are never exported!
-        if (s.payer_id !== currentProfile.id && s.visibility === "hidden") {
-          return false;
-        }
-        return true;
+      subscriptions: subscriptions.filter((sub) => {
+        if (isFamilyView) return sub.visibility === "full_details";
+        return (
+          sub.payer_id === currentProfile.id || sub.visibility !== "hidden"
+        );
       }),
     };
     return JSON.stringify(exportPayload, null, 2);
   };
 
-  const deleteAllHouseholdData = () => {
-    setSubscriptions([]);
-    setMembers((prev) => prev.filter((m) => m.user_id === currentProfile.id));
-    try {
-      localStorage.clear();
-    } catch {
-      // Ignore
+  const deleteAllHouseholdData = async () => {
+    if (isDemoMode) {
+      setSubscriptions([]);
+      setMembers((previous) =>
+        previous.filter((member) => member.user_id === currentProfile.id)
+      );
+      try {
+        localStorage.clear();
+      } catch {
+        setAccountError("Could not clear demo data from this browser.");
+      }
+      return;
     }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase || !authUser || !household.id) {
+      throw new Error("Your account or household is not ready to delete data.");
+    }
+    const { error } = await supabase
+      .from("subscriptions")
+      .delete()
+      .eq("household_id", household.id)
+      .eq("payer_id", authUser.id);
+    if (error) throw error;
+    setSubscriptions([]);
   };
 
-  // Dynamically compute summary according to current viewer's visibility permissions
+  const signOut = async () => {
+    if (isDemoMode) return null;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) throw new Error("Supabase authentication is unavailable.");
+    let gmailDisconnectWarning = "";
+    try {
+      const response = await fetch("/api/connectors/gmail/scan", {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        gmailDisconnectWarning =
+          "You signed out, but Google may not have confirmed Gmail access revocation. Review connected apps in your Google Account.";
+      }
+    } catch {
+      gmailDisconnectWarning =
+        "You signed out, but Gmail could not be disconnected. Review connected apps in your Google Account.";
+    }
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+    return gmailDisconnectWarning || null;
+  };
+
   const summary = isFamilyView
     ? calculateHouseholdSummary(subscriptions)
     : calculateHouseholdSummary(subscriptions, currentProfile.id);
 
-  // Hidden records remain excluded from household-wide recommendations.
   const recommendations = isFamilyView
     ? generateSavingsRecommendations(
         subscriptions.filter((sub) => sub.visibility === "full_details")
       )
     : generateSavingsRecommendations(subscriptions, currentProfile.id);
 
-  // Compute honest audit progress: how thoroughly configured is this household?
-  const visibleSubs = subscriptions.filter((s) => {
-    if (isFamilyView) return s.visibility !== "hidden";
-    if (s.payer_id !== currentProfile.id && s.visibility === "hidden") {
+  const visibleSubs = subscriptions.filter((sub) => {
+    if (isFamilyView) return sub.visibility !== "hidden";
+    if (sub.payer_id !== currentProfile.id && sub.visibility === "hidden") {
       return false;
     }
     return true;
   });
-
-  const missingPayerCount = visibleSubs.filter((s) => !s.payer_id).length;
+  const missingPayerCount = visibleSubs.filter((sub) => !sub.payer_id).length;
   const missingUsersCount = visibleSubs.filter(
-    (s) => !s.user_ids || s.user_ids.length === 0
+    (sub) => !sub.user_ids || sub.user_ids.length === 0
   ).length;
   const unconfirmedCount = visibleSubs.filter(
-    (s) => !s.renewal_date || !s.billing_channel
+    (sub) => !sub.renewal_date || !sub.billing_channel
   ).length;
 
   let score = 100;
@@ -267,8 +532,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       score >= 85
         ? "Comprehensive Inventory"
         : score >= 60
-        ? "Partial Audit in Progress"
-        : "Initial Setup",
+          ? "Partial Audit in Progress"
+          : "Initial Setup",
     isComplete: score >= 90 && unconfirmedCount === 0,
     missingPayerCount,
     missingUsersCount,
@@ -279,6 +544,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider
       value={{
         isDemoMode,
+        authUser,
+        accountError,
         isFamilyView,
         currentProfile,
         allProfiles,
@@ -297,6 +564,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         resetDemoData,
         exportDataJson,
         deleteAllHouseholdData,
+        signOut,
       }}
     >
       {children}

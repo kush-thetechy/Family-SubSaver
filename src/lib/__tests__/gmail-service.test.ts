@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   GmailMessage,
+  GmailApiError,
+  MAX_GMAIL_MESSAGES_PER_SCAN,
   parseGmailMessage,
   parseGeneralGmailMessage,
   parseAppleReceipt,
   parseBankMandateEmail,
   cleanHtmlText,
   consolidateEvidenceToCandidates,
+  searchGmailMultiLane,
 } from "../connectors/gmail-service";
 import { DiscoveryEvidence, Subscription } from "@/types";
 
@@ -430,5 +433,104 @@ You will receive a pre-debit notification at least 24 hours prior to every sched
     expect(candidates[0].is_possible_duplicate).toBe(true);
     expect(candidates[0].duplicate_matches).toHaveLength(1);
     expect(candidates[0].duplicate_matches?.[0].service_name).toBe("Netflix");
+  });
+});
+
+describe("Gmail scan limits and failures", () => {
+  it("caps fetched messages and reports when a scan may be incomplete", async () => {
+    const listRequests: string[] = [];
+    const fetchedMessages: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/messages")) {
+        listRequests.push(url.toString());
+        const pageToken = url.searchParams.get("pageToken");
+        const offset = pageToken ? 100 : 0;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            messages: Array.from({ length: 100 }, (_, index) => ({
+              id: `message-${offset + index}`,
+            })),
+            ...(pageToken ? {} : { nextPageToken: "next-page" }),
+          }),
+        } as Response;
+      }
+
+      fetchedMessages.push(url.pathname);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: url.pathname.split("/").pop() }),
+      } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const result = await searchGmailMultiLane("test-access-token");
+
+      expect(MAX_GMAIL_MESSAGES_PER_SCAN).toBe(200);
+      expect(result.totalMessagesScanned).toBe(MAX_GMAIL_MESSAGES_PER_SCAN);
+      expect(result.warnings).toContain(
+        "This scan reached the 200-message limit; results may be incomplete."
+      );
+      expect(result.lanesScanned).toEqual(["Store Receipts & Renewals"]);
+      expect(listRequests).toHaveLength(2);
+      expect(fetchedMessages).toHaveLength(MAX_GMAIL_MESSAGES_PER_SCAN);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("fails explicitly when every Gmail search lane fails", async () => {
+    const fetchMock = vi.fn(async () =>
+      ({
+        ok: false,
+        status: 503,
+        json: async () => ({}),
+      }) as Response
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(
+        searchGmailMultiLane("test-access-token")
+      ).rejects.toBeInstanceOf(GmailApiError);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not turn a generic mandate email into a subscription candidate", async () => {
+    const unrelatedMessage = makeMessage(
+      "Your mandate was updated for ₹250 and remains valid.",
+      "Mandate update",
+      "notifications@example.com"
+    );
+    unrelatedMessage.id = "unrelated-mandate";
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const json = url.pathname.endsWith("/messages")
+        ? { messages: [{ id: unrelatedMessage.id }] }
+        : unrelatedMessage;
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => json,
+      } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const result = await searchGmailMultiLane("test-access-token");
+      expect(result.totalMessagesScanned).toBe(1);
+      expect(result.candidates).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

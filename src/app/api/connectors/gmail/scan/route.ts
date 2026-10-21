@@ -7,12 +7,15 @@ import {
 } from "@/lib/connectors/server-token-store";
 import {
   GmailApiError,
+  MAX_GMAIL_SCANS_PER_DAY,
   getSampleConsolidatedCandidates,
   normalizeGmailHistoryRange,
   searchGmailMultiLane,
   ScanOptions,
 } from "@/lib/connectors/gmail-service";
 import { Subscription } from "@/types";
+import { isSupabaseConfigured } from "@/lib/supabase";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 interface ScanRequestBody {
   mode?: "live" | "sandbox";
@@ -25,27 +28,60 @@ interface GoogleRefreshResponse {
   expires_in?: number;
 }
 
+interface GmailScanQuota {
+  allowed: boolean;
+  scans_remaining: number;
+  resets_at: string;
+}
+
+async function getSignedInUserId(): Promise<string | null> {
+  if (!isSupabaseConfigured) return null;
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw error;
+  return data.user?.id ?? null;
+}
+
 export async function GET() {
-  const configured = Boolean(
+  const hasGoogleConfiguration = Boolean(
     process.env.GOOGLE_CLIENT_ID &&
       process.env.GOOGLE_CLIENT_SECRET &&
       isSessionEncryptionConfigured()
   );
+  const configured = Boolean(
+    isSupabaseConfigured && hasGoogleConfiguration
+  );
   const session = getSessionFromRequestCookies();
-  const connected = Boolean(session && !session.isDemo);
+  const userId = await getSignedInUserId();
+  const connected = Boolean(
+    configured &&
+    session &&
+    !session.isDemo &&
+    session.userId === userId
+  );
 
   return NextResponse.json({
     configured,
     connected,
     email: connected ? session?.email ?? null : null,
+    message: !isSupabaseConfigured
+      ? "Live Gmail scans require a configured Supabase account."
+      : !hasGoogleConfiguration
+        ? "Live Gmail linking needs server OAuth and session-encryption settings."
+        : undefined,
   });
 }
 
 export async function DELETE() {
   const session = getSessionFromRequestCookies();
+  const userId = await getSignedInUserId();
   let revokeFailed = false;
 
-  if (session && !session.isDemo) {
+  if (
+    session &&
+    !session.isDemo &&
+    (!isSupabaseConfigured || session.userId === userId)
+  ) {
     const token = session.googleRefreshToken || session.googleAccessToken;
     if (token) {
       try {
@@ -82,11 +118,45 @@ export async function DELETE() {
 }
 
 export async function POST(request: Request) {
-  let body: ScanRequestBody;
+  let parsedBody: unknown;
   try {
-    body = (await request.json()) as ScanRequestBody;
+    parsedBody = await request.json();
   } catch {
-    body = {};
+    return NextResponse.json(
+      { success: false, error: "Request body must be valid JSON." },
+      { status: 400 }
+    );
+  }
+  if (
+    !parsedBody ||
+    typeof parsedBody !== "object" ||
+    Array.isArray(parsedBody)
+  ) {
+    return NextResponse.json(
+      { success: false, error: "Request body must be a JSON object." },
+      { status: 400 }
+    );
+  }
+  const body = parsedBody as ScanRequestBody;
+  const requestMode = (parsedBody as Record<string, unknown>).mode;
+  if (
+    requestMode !== undefined &&
+    requestMode !== "live" &&
+    requestMode !== "sandbox"
+  ) {
+    return NextResponse.json(
+      { success: false, error: "Unsupported Gmail scan mode." },
+      { status: 400 }
+    );
+  }
+  if (
+    body.existingSubscriptions !== undefined &&
+    !Array.isArray(body.existingSubscriptions)
+  ) {
+    return NextResponse.json(
+      { success: false, error: "Existing subscriptions must be a list." },
+      { status: 400 }
+    );
   }
 
   const session = getSessionFromRequestCookies();
@@ -113,14 +183,31 @@ export async function POST(request: Request) {
     });
   }
 
-  if (!session) {
+  if (!isSupabaseConfigured) {
     return NextResponse.json(
       {
         success: false,
-        error: "Please connect your Gmail account before starting a scan.",
+        error: "Live Gmail scans require a configured, signed-in account.",
+      },
+      { status: 503 }
+    );
+  }
+
+  const userId = await getSignedInUserId();
+  if (
+    !session ||
+    !userId ||
+    session.userId !== userId
+  ) {
+    const response = NextResponse.json(
+      {
+        success: false,
+        error: "Please connect Gmail from your signed-in account before scanning.",
       },
       { status: 401 }
     );
+    if (session) clearSessionCookie(response);
+    return response;
   }
 
   let accessToken = session.googleAccessToken;
@@ -199,12 +286,50 @@ export async function POST(request: Request) {
 
   // Execute live multi-lane search
   try {
+    const supabase = createSupabaseServerClient();
+    const { data: quotaRows, error: quotaError } = await supabase.rpc(
+      "consume_gmail_scan_quota"
+    );
+    if (quotaError) {
+      console.error("Could not enforce Gmail scan quota:", quotaError);
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Gmail scan limits could not be verified. Please try again later.",
+        },
+        { status: 503 }
+      );
+    }
+
+    const quota = (quotaRows as GmailScanQuota[] | null)?.[0];
+    if (!quota) {
+      console.error("Gmail scan quota function returned no result.");
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Gmail scan limits could not be verified. Please try again later.",
+        },
+        { status: 503 }
+      );
+    }
+    if (!quota.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Daily Gmail scan limit reached (${MAX_GMAIL_SCANS_PER_DAY} scans). Try again after ${quota.resets_at}.`,
+          scansRemaining: quota.scans_remaining,
+          resetsAt: quota.resets_at,
+        },
+        { status: 429 }
+      );
+    }
+
     const scanOptions: ScanOptions = {
       historyRange,
       existingSubscriptions: body.existingSubscriptions,
     };
 
-    const { candidates, totalMessagesScanned, lanesScanned } =
+    const { candidates, totalMessagesScanned, lanesScanned, warnings } =
       await searchGmailMultiLane(accessToken, scanOptions);
 
     const response = NextResponse.json({
@@ -215,6 +340,7 @@ export async function POST(request: Request) {
       totalMessagesScanned,
       historyRange: scanOptions.historyRange,
       lanesScanned,
+      warnings,
       message:
         candidates.length > 0
           ? `Discovered ${candidates.length} likely subscription candidates from ${totalMessagesScanned} keyword-matched emails in the past ${historyRange === "30d" ? "30" : "45"} days. Review each candidate before saving.`

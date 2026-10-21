@@ -38,6 +38,7 @@ function SubscriptionsContent() {
   const {
     subscriptions,
     currentProfile,
+    household,
     isFamilyView,
     members,
     addSubscription,
@@ -124,7 +125,7 @@ function SubscriptionsContent() {
     }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formService.trim()) {
       setFormError("Service name is required.");
@@ -140,42 +141,62 @@ function SubscriptionsContent() {
     const validity =
       formCycle === "prepaid" ? parseInt(formValidityDays) || 28 : undefined;
 
-    if (editingSub) {
-      updateSubscription(editingSub.id, {
-        service_name: formService.trim(),
-        plan_name: formPlan.trim() || undefined,
-        category: formCategory,
-        billing_cycle: formCycle,
-        amount_paise: amountPaise,
-        validity_days: validity,
-        payer_id: formPayerId,
-        user_ids: formUserIds,
-        billing_channel: formBillingChannel,
-        renewal_date: formRenewalDate || undefined,
-        visibility: formVisibility,
-        notes: formNotes.trim() || undefined,
-      });
-    } else {
-      addSubscription({
-        household_id: "hh-demo-sharma",
-        service_name: formService.trim(),
-        plan_name: formPlan.trim() || undefined,
-        category: formCategory,
-        billing_cycle: formCycle,
-        amount_paise: amountPaise,
-        validity_days: validity,
-        payer_id: formPayerId,
-        user_ids: formUserIds,
-        billing_channel: formBillingChannel,
-        renewal_date: formRenewalDate || undefined,
-        visibility: formVisibility,
-        source: "manual",
-        is_active: true,
-        notes: formNotes.trim() || undefined,
-      });
+    try {
+      if (editingSub) {
+        await updateSubscription(editingSub.id, {
+          service_name: formService.trim(),
+          plan_name: formPlan.trim() || undefined,
+          category: formCategory,
+          billing_cycle: formCycle,
+          amount_paise: amountPaise,
+          validity_days: validity,
+          payer_id: formPayerId,
+          user_ids: formUserIds,
+          billing_channel: formBillingChannel,
+          renewal_date: formRenewalDate || undefined,
+          visibility: formVisibility,
+          notes: formNotes.trim() || undefined,
+        });
+      } else {
+        await addSubscription({
+          household_id: household.id,
+          service_name: formService.trim(),
+          plan_name: formPlan.trim() || undefined,
+          category: formCategory,
+          billing_cycle: formCycle,
+          amount_paise: amountPaise,
+          validity_days: validity,
+          payer_id: formPayerId,
+          user_ids: formUserIds,
+          billing_channel: formBillingChannel,
+          renewal_date: formRenewalDate || undefined,
+          visibility: formVisibility,
+          source: "manual",
+          is_active: true,
+          notes: formNotes.trim() || undefined,
+        });
+      }
+      setIsModalOpen(false);
+    } catch (error) {
+      setFormError(
+        error instanceof Error
+          ? error.message
+          : "Could not save this subscription."
+      );
     }
+  };
 
-    setIsModalOpen(false);
+  const handleDelete = async (id: string, serviceName: string) => {
+    if (!confirm(`Are you sure you want to delete "${serviceName}"?`)) return;
+    try {
+      await deleteSubscription(id);
+    } catch (error) {
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Could not delete this subscription."
+      );
+    }
   };
 
   // Filter subscriptions based on visibility and search/filter inputs
@@ -458,15 +479,7 @@ function SubscriptionsContent() {
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `Are you sure you want to delete "${sub.service_name}"?`
-                      )
-                    ) {
-                      deleteSubscription(sub.id);
-                    }
-                  }}
+                  onClick={() => void handleDelete(sub.id, sub.service_name)}
                   disabled={sub.isRedacted}
                   className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-40"
                   title="Delete subscription"

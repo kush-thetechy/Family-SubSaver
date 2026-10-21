@@ -1,8 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useApp } from "@/context/AppContext";
 import {
   LayoutDashboard,
@@ -14,18 +14,24 @@ import {
   RotateCcw,
   UserCheck,
   FileUp,
+  LogOut,
 } from "lucide-react";
 
 export function Navigation() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [signOutError, setSignOutError] = useState("");
   const {
     currentProfile,
+    authUser,
+    accountError,
     isFamilyView,
     allProfiles,
     switchActiveProfile,
     isDemoMode,
     resetDemoData,
     summary,
+    signOut,
   } = useApp();
 
   const navLinks = [
@@ -36,6 +42,21 @@ export function Navigation() {
     { href: "/household", label: "Household", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
+
+  const handleSignOut = async () => {
+    setSignOutError("");
+    try {
+      const warning = await signOut();
+      router.replace(
+        warning ? `/login?warning=${encodeURIComponent(warning)}` : "/login"
+      );
+      router.refresh();
+    } catch (error) {
+      setSignOutError(
+        error instanceof Error ? error.message : "Could not sign out."
+      );
+    }
+  };
 
   return (
     <>
@@ -60,6 +81,17 @@ export function Navigation() {
               <RotateCcw className="w-3 h-3" />
               Reset Demo
             </button>
+          </div>
+        )}
+
+        {accountError && (
+          <div role="alert" className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+            {accountError}
+          </div>
+        )}
+        {signOutError && (
+          <div role="alert" className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+            {signOutError}
           </div>
         )}
 
@@ -103,26 +135,52 @@ export function Navigation() {
 
           {/* Profile Switcher (Key feature to test visibility & privacy!) */}
           <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
-              <span className="hidden sm:inline-block px-1.5 font-medium text-slate-500 dark:text-slate-400">
-                Viewing as:
-              </span>
-              <select
-                value={isFamilyView ? "family" : currentProfile.id}
-                onChange={(e) => switchActiveProfile(e.target.value)}
-                className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-semibold py-1 px-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                aria-label="Choose family or member view"
+            {isDemoMode ? (
+              <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
+                <span className="hidden sm:inline-block px-1.5 font-medium text-slate-500 dark:text-slate-400">
+                  Viewing as:
+                </span>
+                <select
+                  value={isFamilyView ? "family" : currentProfile.id}
+                  onChange={(e) => switchActiveProfile(e.target.value)}
+                  className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-semibold py-1 px-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  aria-label="Choose family or member view"
+                >
+                  <option value="family">Whole family</option>
+                  {allProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : authUser ? (
+              <>
+                <span
+                  data-clarity-mask="true"
+                  className="hidden sm:block max-w-40 truncate text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {authUser.email}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <Link
+                href="/login"
+                className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
               >
-                <option value="family">Whole family</option>
-                {allProfiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+                Sign in
+              </Link>
+            )}
 
-            {summary.hiddenCountForOthers > 0 && (
+            {isDemoMode && summary.hiddenCountForOthers > 0 && (
               <div
                 className="hidden lg:flex items-center gap-1 text-[11px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-2 py-1 rounded-lg"
                 title="Privacy protection active: 1 subscription hidden from this member"

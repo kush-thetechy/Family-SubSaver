@@ -28,7 +28,7 @@ Expired`;
         service_name: "Proton VPN",
         plan_name: "VPN Plus",
         amount_rupees: 599,
-        billing_cycle: "monthly",
+        billing_cycle: "unknown",
         category: "other",
         renewal_date: "2026-10-22",
         confidence: 0.82,
@@ -59,6 +59,19 @@ Expired`;
         category: "other",
         renewal_date: "2026-12-20",
         confidence: 0.82,
+      },
+    ]);
+  });
+
+  it("keeps a missing billing cycle unknown instead of assuming monthly", () => {
+    const results = parseSubscriptionScreenshotText(
+      "Netflix Premium\nNext payment: ₹649.00 on 15/11/2026"
+    );
+
+    expect(results).toMatchObject([
+      {
+        service_name: "Netflix",
+        billing_cycle: "unknown",
       },
     ]);
   });

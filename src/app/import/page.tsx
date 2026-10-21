@@ -48,9 +48,12 @@ interface ScreenshotReviewItem extends ExtractedItem {
   selected: boolean;
 }
 
+const MAX_SCREENSHOTS_PER_IMPORT = 5;
+const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
+
 function ImportContent() {
   const searchParams = useSearchParams();
-  const { currentProfile, subscriptions, addSubscription } = useApp();
+  const { currentProfile, household, subscriptions, addSubscription } = useApp();
 
   const [hasConsented, setHasConsented] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -66,6 +69,7 @@ function ImportContent() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailConfigured, setGmailConfigured] = useState(false);
   const [gmailStatusLoaded, setGmailStatusLoaded] = useState(false);
+  const [gmailSetupMessage, setGmailSetupMessage] = useState("");
   const [gmailEmail, setGmailEmail] = useState<string | null>(null);
   const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
   const [modalConsent, setModalConsent] = useState(false);
@@ -98,6 +102,7 @@ function ImportContent() {
           configured: boolean;
           connected: boolean;
           email?: string | null;
+          message?: string;
         };
       })
       .then((status) => {
@@ -105,6 +110,7 @@ function ImportContent() {
         setGmailConfigured(status.configured);
         setGmailConnected(status.connected);
         setGmailStatusLoaded(true);
+        setGmailSetupMessage(status.message ?? "");
         if (status.email) setGmailEmail(status.email);
       })
       .catch(() => {
@@ -153,13 +159,21 @@ function ImportContent() {
       setErrorMessage("Please accept the privacy consent before importing data.");
       return;
     }
+    if (selectedFiles.length > MAX_SCREENSHOTS_PER_IMPORT) {
+      setErrorMessage(
+        `Choose no more than ${MAX_SCREENSHOTS_PER_IMPORT} screenshots per import.`
+      );
+      return;
+    }
 
     const invalidFile = selectedFiles.find(
-      (file) => !file.type.match(/image\/(jpeg|png|webp)/) || file.size > 10 * 1024 * 1024
+      (file) =>
+        !file.type.match(/^image\/(jpeg|png|webp)$/) ||
+        file.size > MAX_SCREENSHOT_BYTES
     );
     if (invalidFile) {
       setErrorMessage(
-        invalidFile.size > 10 * 1024 * 1024
+        invalidFile.size > MAX_SCREENSHOT_BYTES
           ? `${invalidFile.name} exceeds the 10MB limit. Please choose a smaller screenshot.`
           : `Please select PNG, JPEG, or WEBP screenshots. ${invalidFile.name} is not a supported image.`
       );
@@ -309,6 +323,7 @@ function ImportContent() {
         totalMessagesScanned?: number;
         historyRange?: string;
         lanesScanned?: string[];
+        warnings?: string[];
         error?: string;
         message?: string;
       };
@@ -321,7 +336,11 @@ function ImportContent() {
       }
 
       setGmailCandidates(data.candidates ?? []);
-      setGmailMessage(data.message || "Gmail scan complete.");
+      setGmailMessage(
+        [data.message || "Gmail scan complete.", ...(data.warnings ?? [])].join(
+          " "
+        )
+      );
       requestAnimationFrame(() => {
         gmailResultsRef.current?.scrollIntoView({
           behavior: "smooth",
@@ -377,7 +396,7 @@ function ImportContent() {
   };
 
   // 5. Confirm and save the selected screenshot entries.
-  const handleSaveScreenshotItems = () => {
+  const handleSaveScreenshotItems = async () => {
     if (!hasConsented) {
       setErrorMessage("Please accept the privacy consent before saving imported data.");
       return;
@@ -388,24 +407,43 @@ function ImportContent() {
       setErrorMessage("Select at least one recognized subscription to save.");
       return;
     }
+    if (selectedItems.some((item) => item.billing_cycle === "unknown")) {
+      setErrorMessage(
+        "Confirm a billing cycle for every selected screenshot item before saving."
+      );
+      return;
+    }
 
-    for (const item of selectedItems) {
-      addSubscription({
-        household_id: "hh-demo-sharma",
-        service_name: item.service_name.trim(),
-        plan_name: item.plan_name.trim() || undefined,
-        amount_paise: rupeesToPaise(item.amountRupees),
-        billing_cycle: item.billing_cycle === "unknown" ? "monthly" : item.billing_cycle,
-        category: item.category,
-        payer_id: currentProfile.id,
-        user_ids: [currentProfile.id],
-        billing_channel: item.billing_channel,
-        renewal_date: item.renewal_date || undefined,
-        visibility: "full_details",
-        source: "import",
-        is_active: true,
-        notes: `Imported via ${item.source_label}. Verified by ${currentProfile.name}.`,
-      });
+    try {
+      for (const item of selectedItems) {
+        const billingCycle = item.billing_cycle;
+        if (billingCycle === "unknown") {
+          throw new Error("Confirm a billing cycle for each selected screenshot item.");
+        }
+        await addSubscription({
+          household_id: household.id,
+          service_name: item.service_name.trim(),
+          plan_name: item.plan_name.trim() || undefined,
+          amount_paise: rupeesToPaise(item.amountRupees),
+          billing_cycle: billingCycle,
+          category: item.category,
+          payer_id: currentProfile.id,
+          user_ids: [currentProfile.id],
+          billing_channel: item.billing_channel,
+          renewal_date: item.renewal_date || undefined,
+          visibility: "full_details",
+          source: "import",
+          is_active: true,
+          notes: `Imported via ${item.source_label}. Verified by ${currentProfile.name}.`,
+        });
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? `Some subscriptions may not have been saved: ${error.message}`
+          : "Some subscriptions may not have been saved. Refresh and check your list."
+      );
+      return;
     }
 
     setScreenshotSavedCount(selectedItems.length);
@@ -415,7 +453,7 @@ function ImportContent() {
   };
 
   // 6. Confirm & Save Subscription from Unified Review Form
-  const handleConfirmSave = (e: React.FormEvent) => {
+  const handleConfirmSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!extractedData) return;
     if (!hasConsented) {
@@ -434,22 +472,29 @@ function ImportContent() {
       return;
     }
 
-    addSubscription({
-      household_id: "hh-demo-sharma",
-      service_name: extractedData.service_name,
-      plan_name: extractedData.plan_name,
-      amount_paise: rupeesToPaise(amountNum),
-      billing_cycle: extractedData.billing_cycle,
-      category: extractedData.category,
-      payer_id: currentProfile.id,
-      user_ids: [currentProfile.id],
-      billing_channel: extractedData.billing_channel,
-      renewal_date: extractedData.renewal_date || undefined,
-      visibility: "full_details",
-      source: "import",
-      is_active: true,
-      notes: `Imported via ${extractedData.source_label}. Verified by ${currentProfile.name}.`,
-    });
+    try {
+      await addSubscription({
+        household_id: household.id,
+        service_name: extractedData.service_name,
+        plan_name: extractedData.plan_name,
+        amount_paise: rupeesToPaise(amountNum),
+        billing_cycle: extractedData.billing_cycle,
+        category: extractedData.category,
+        payer_id: currentProfile.id,
+        user_ids: [currentProfile.id],
+        billing_channel: extractedData.billing_channel,
+        renewal_date: extractedData.renewal_date || undefined,
+        visibility: "full_details",
+        source: "import",
+        is_active: true,
+        notes: `Imported via ${extractedData.source_label}. Verified by ${currentProfile.name}.`,
+      });
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not save this subscription."
+      );
+      return;
+    }
 
     setSavedSuccess(true);
     setExtractedData(null);
@@ -528,7 +573,10 @@ function ImportContent() {
             <button
               type="button"
               onClick={gmailConnected ? () => handleScanGmail("live") : handleOpenConnectModal}
-              disabled={gmailScanning}
+              disabled={
+                gmailScanning ||
+                (!gmailConnected && gmailStatusLoaded && !gmailConfigured)
+              }
               className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
             >
               {gmailScanning ? "Scanning matching emails..." : gmailConnected ? "Scan Gmail" : "Connect Gmail"}
@@ -557,7 +605,7 @@ function ImportContent() {
                 <span>Select Screenshot(s)</span>
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/jpeg,image/png,image/webp"
                   multiple
                   onChange={handleFileChange}
                   className="hidden"
@@ -576,7 +624,7 @@ function ImportContent() {
               </div>
             )}
             <p className="mt-3 text-[11px] text-slate-400">
-              Your screenshot is processed locally in this browser and never uploaded. Always verify results before saving.
+              Process up to 5 PNG, JPEG, or WEBP screenshots (10MB each). OCR runs locally in this browser; images are never uploaded. Always verify results before saving.
             </p>
           </div>
 
@@ -621,7 +669,8 @@ function ImportContent() {
                     role="status"
                     className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:text-amber-200"
                   >
-                    Live Gmail linking needs server OAuth settings. You can preview sample results without connecting an inbox.
+                    {gmailSetupMessage ||
+                      "Live Gmail linking needs server settings. You can preview sample results without connecting an inbox."}
                   </p>
                 )}
                 {gmailConnected && (
@@ -651,7 +700,10 @@ function ImportContent() {
                       ? () => handleScanGmail("live")
                       : handleOpenConnectModal
                   }
-                  disabled={gmailScanning}
+                  disabled={
+                    gmailScanning ||
+                    (!gmailConnected && gmailStatusLoaded && !gmailConfigured)
+                  }
                   className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-semibold transition flex items-center justify-center gap-1.5"
                 >
                   {gmailScanning ? (
@@ -1064,7 +1116,9 @@ function ImportContent() {
                             candidate.id === item.id
                               ? {
                                   ...candidate,
-                                  billing_cycle: event.target.value as BillingCycle,
+                                  billing_cycle: event.target.value as
+                                    | BillingCycle
+                                    | "unknown",
                                 }
                               : candidate
                           )
@@ -1072,6 +1126,7 @@ function ImportContent() {
                       }
                       className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white"
                     >
+                      <option value="unknown">Confirm billing cycle</option>
                       <option value="monthly">Monthly</option>
                       <option value="quarterly">Quarterly</option>
                       <option value="half_yearly">Half-Yearly</option>

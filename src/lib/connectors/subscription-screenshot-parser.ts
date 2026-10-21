@@ -5,7 +5,7 @@ export interface ParsedScreenshotSubscription {
   service_name: string;
   plan_name: string;
   amount_rupees: number;
-  billing_cycle: BillingCycle;
+  billing_cycle: BillingCycle | "unknown";
   category: SubscriptionCategory;
   renewal_date: string;
   confidence: number;
@@ -56,7 +56,7 @@ function cleanLine(line: string): string {
     .trim();
 }
 
-function parseBillingCycle(text: string): BillingCycle {
+function parseBillingCycle(text: string): BillingCycle | "unknown" {
   if (/\b(quarterly|every 3 months|3 months?)\b/i.test(text)) return "quarterly";
   if (/\b(half[- ]yearly|semi[- ]annual|6 months?)\b/i.test(text)) {
     return "half_yearly";
@@ -64,7 +64,8 @@ function parseBillingCycle(text: string): BillingCycle {
   if (/\b(annual|annually|yearly|per year|12 months?)\b/i.test(text)) {
     return "annual";
   }
-  return "monthly";
+  if (/\b(monthly|per month|\/month|\/mo)\b/i.test(text)) return "monthly";
+  return "unknown";
 }
 
 function parseDate(text: string): string {

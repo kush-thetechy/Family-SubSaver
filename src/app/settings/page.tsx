@@ -27,6 +27,7 @@ export default function SettingsPage() {
 
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const handleExport = () => {
     const dataStr = exportDataJson();
@@ -45,16 +46,31 @@ export default function SettingsPage() {
     setTimeout(() => setDownloadSuccess(false), 3000);
   };
 
-  const handleDeleteAll = () => {
+  const handleDeleteAll = async () => {
+    setActionError("");
     if (
       confirm(
-        "WARNING: This will permanently delete all household subscriptions and reset local data. This action cannot be undone. Are you sure?"
+        `WARNING: This will permanently delete ${
+          isDemoMode ? "all local demo records" : "all subscriptions in your personal household"
+        }. This action cannot be undone. Are you sure?`
       )
     ) {
-      deleteAllHouseholdData();
-      setDeleteConfirmed(true);
-      setTimeout(() => setDeleteConfirmed(false), 4000);
+      try {
+        await deleteAllHouseholdData();
+        setDeleteConfirmed(true);
+        setTimeout(() => setDeleteConfirmed(false), 4000);
+      } catch (error) {
+        setActionError(
+          error instanceof Error ? error.message : "Could not delete your data."
+        );
+      }
     }
+  };
+
+  const setAnalyticsConsent = (allowed: boolean) => {
+    window.dispatchEvent(
+      new CustomEvent("fss-clarity-consent-change", { detail: allowed })
+    );
   };
 
   return (
@@ -69,6 +85,12 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      {actionError && (
+        <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+          {actionError}
+        </p>
+      )}
+
       {/* Persistence / Mode Status */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
         <div className="flex items-center gap-2">
@@ -82,23 +104,61 @@ export default function SettingsPage() {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-sm text-slate-900 dark:text-white">
-                {isDemoMode ? "Interactive Demo Mode Active" : "Supabase Connected"}
+                {isDemoMode ? "Interactive Demo Mode Active" : "Signed-in personal account"}
               </span>
-              <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 rounded-full">
-                Zero Configuration
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                isDemoMode
+                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+              }`}>
+                {isDemoMode ? "Local demo" : "Private cloud storage"}
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Changes persist in browser local storage. Connect Supabase in `.env.local` to enable multi-device sync and live PostgreSQL Row Level Security.
+              {isDemoMode
+                ? "Demo changes persist only in this browser. Configure Supabase to enable sign-in and private cloud storage."
+                : "Your subscription records are stored in your Supabase household and protected by database Row Level Security. Family sharing is not enabled yet."}
             </p>
           </div>
 
+          {isDemoMode && (
+            <button
+              onClick={resetDemoData}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 shrink-0 shadow-sm"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Demo Dataset
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+        <div className="flex items-center gap-2">
+          <Shield className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            Analytics Privacy
+          </h2>
+        </div>
+        <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+          Microsoft Clarity is loaded only if you allow usage and interaction
+          analytics. Application text is masked, and your choice is stored in
+          this browser.
+        </p>
+        <div className="flex flex-wrap gap-2">
           <button
-            onClick={resetDemoData}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 shrink-0 shadow-sm"
+            type="button"
+            onClick={() => setAnalyticsConsent(true)}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reset Demo Dataset
+            Allow analytics
+          </button>
+          <button
+            type="button"
+            onClick={() => setAnalyticsConsent(false)}
+            className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Reject or revoke analytics
           </button>
         </div>
       </div>
@@ -141,10 +201,12 @@ export default function SettingsPage() {
           <div className="p-4 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/30 dark:bg-rose-950/20 flex flex-col justify-between">
             <div>
               <h3 className="font-bold text-sm text-rose-900 dark:text-rose-200">
-                Delete Household Records
+                {isDemoMode ? "Delete Demo Records" : "Delete Subscriptions"}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Permanently purge all subscriptions and reset the household.
+                {isDemoMode
+                  ? "Permanently remove the demo subscriptions from this browser."
+                  : "Permanently remove all subscriptions from your private household."}
               </p>
             </div>
             <div className="pt-4">
@@ -153,7 +215,11 @@ export default function SettingsPage() {
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-sm transition"
               >
                 <Trash2 className="w-4 h-4" />
-                {deleteConfirmed ? "Records Deleted" : "Purge All Data"}
+                {deleteConfirmed
+                  ? "Records Deleted"
+                  : isDemoMode
+                    ? "Delete demo records"
+                    : "Delete subscriptions"}
               </button>
             </div>
           </div>
@@ -212,4 +278,3 @@ export default function SettingsPage() {
     </div>
   );
 }
-

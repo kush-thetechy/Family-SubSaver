@@ -233,8 +233,9 @@ Catalog-backed claims require official source URLs and verification dates. Do no
 ## Import flow
 
 * Obtain consent and validate screenshot image type and size.
-* Run English OCR in the browser; the screenshot itself is not uploaded or retained by the app. Tesseract.js loads its OCR worker and language data from the jsDelivr CDN.
-* Extract multiple subscription candidates, with amounts and renewal dates where visible.
+* Run English OCR in the browser with Tesseract.js; screenshots are not uploaded or retained by the app. Tesseract.js loads its OCR worker and language data from the jsDelivr CDN. This is local OCR, not a hosted LLM or OpenRouter call.
+* Limit each import to five PNG, JPEG or WEBP screenshots, at 10 MB per image.
+* Extract multiple subscription candidates, with amounts and renewal dates where visible. Keep billing cycles unknown unless visible in the screenshot; require confirmation before saving.
 * Show proposed details in editable review cards, flag likely duplicates, and let the user select which entries to save.
 * Save only after explicit confirmation. OCR may miss or misread text, so users must verify all fields.
 * Receipt screenshot OCR does not support PDFs or continuous monitoring.
@@ -254,6 +255,7 @@ Before real household data is accepted:
 * Validate inputs server-side.
 * Keep privileged keys server-only.
 * Avoid logging receipt contents or sensitive notes.
+* Load Microsoft Clarity only after explicit analytics consent. Mask application page content and allow users to revoke consent in Settings.
 * Implement and document retention/deletion.
 * Provide a privacy notice, terms, support contact and incident-handling process.
 * Use synthetic data until access-control and deletion tests pass.
@@ -305,8 +307,7 @@ Money fields should use names such as `amount\_paise` or `price\_paise`. Keep th
 * Supported Node.js version.
 * npm, pnpm or yarn matching the repository lockfile.
 * Git.
-* Supabase credentials if hosted authentication/persistence is enabled.
-* Optional extraction-provider credentials if real import extraction is configured.
+* A Supabase project for account sign-in and private subscription storage.
 
 ### Install
 
@@ -319,6 +320,10 @@ Use the repository's actual package manager if it uses pnpm or yarn.
 ### Configure environment
 
 Create `.env.local` using `.env.example` if available. Never commit `.env.local` or real keys.
+
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from your Supabase project's API settings. In Supabase Authentication, configure the site URL and add `http://localhost:3000/auth/callback` as a redirect URL. Apply all SQL migrations in `supabase/migrations/` in filename order before creating accounts. They create private personal households and subscription tables with Row Level Security, plus the Gmail scan quota; family invitations are not enabled yet. Without Supabase configuration, the app remains in demo mode.
+
+Users can create an account or sign in at `/login`. If email confirmation is enabled in Supabase, they must confirm using the link before signing in. Authenticated accounts store subscriptions in Supabase; demo records remain browser-local and are not copied into accounts.
 
 ### Connect Gmail for subscription discovery
 
@@ -338,11 +343,11 @@ Gmail discovery is optional, read-only, and explicitly user-triggered. A live sc
    Generate the local session secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Configure a different secret in Vercel for production; Gmail sessions are encrypted into an `HttpOnly` cookie so they survive serverless requests without an in-memory session map.
 4. Restart the development server (`npm run dev`).
 5. Open the **Import** page, click **Connect Gmail**, review the data disclosure and consent terms, and approve read-only Google access.
-6. Select **Past 30 days** or **Past 45 days**, then click **Scan Gmail Inbox**. The server enforces this limit even if a request submits a longer range.
+6. Select **Past 30 days** or **Past 45 days**, then click **Scan Gmail Inbox**. Each account can run at most five live scans per UTC calendar day; the quota is shared across devices and enforced server-side. The server also enforces the date range even if a request submits a longer range.
 
 #### Discovery architecture & evidence lanes
 
-The discovery engine paginates all recent keyword matches through three evidence lanes. Gmail's search filters messages before their contents are fetched, and the 30/45-day date filter applies to every lane:
+The discovery engine searches recent keyword matches through three evidence lanes. Gmail's search filters messages before their contents are fetched, the 30/45-day date filter applies to every lane, and a scan stops after 200 unique matching messages. Together with the five-live-scans-per-account-per-day quota, this bounds API use:
 
 * **Store Receipts & Renewals:** Google Play receipts and renewal messages, plus Apple App Store receipts/invoices with subscription or renewal terms. Google Play receipt IDs (`GPA.*`), app names, plan tiers, recurring price and period are captured when present. Apple gross totals are distinguished from subtotals and IGST/taxes.
 * **Direct Merchant Billing:** Search for combinations of subscription/renewal terms and billing terms, plus known provider names such as Netflix, Spotify, Disney+ Hotstar, YouTube Premium, Google One, Microsoft 365, Adobe, Dropbox, ChatGPT, Claude, Apple, Airtel and Jio.
@@ -369,7 +374,7 @@ Google classifies `https://www.googleapis.com/auth/gmail.readonly` as a **Restri
 
 * **Mailbox coverage:** Scans search only the connected mailbox. Subscriptions managed under family members' Google accounts, personal emails, or employer accounts will not appear unless their owners connect their accounts.
 * **Format variations:** Invoices from small merchants or emails lacking standard INR currency symbols or pricing tables may not be recognized.
-* **No background surveillance:** The app does not run background email crawlers. Scans run only when explicitly triggered by the user, and all findings require human review before saving.
+* **No background surveillance:** The app does not run background email crawlers. Live Gmail scans require a signed-in account, are explicitly triggered, capped at 200 unique messages per scan and five scans per UTC day, and all findings require human review before saving. Sample previews do not access Gmail.
 
 ### Start development server
 
@@ -394,24 +399,21 @@ Names depend on the implementation. Likely variables include:
 
 |Variable|Purpose|
 |-|-|
-|`NEXT\_PUBLIC\_SUPABASE\_URL`|Supabase project URL|
-|`NEXT\_PUBLIC\_SUPABASE\_ANON\_KEY`|Public client key, protected by RLS and authorization|
-|`SUPABASE\_SERVICE\_ROLE\_KEY`|Privileged server-side operations only; never expose to browser|
+|`NEXT\_PUBLIC\_SUPABASE\_URL`|Required for account sign-in and private subscription storage|
+|`NEXT\_PUBLIC\_SUPABASE\_ANON\_KEY`|Required public client key; database access is protected by RLS|
 |`GOOGLE\_CLIENT\_ID`|Optional Google OAuth web client ID for live Gmail scanning|
 |`GOOGLE\_CLIENT\_SECRET`|Optional server-side Google OAuth client secret|
-|`RECEIPT\_EXTRACTION\_PROVIDER`|Optional extraction provider selection|
-|`RECEIPT\_EXTRACTION\_API\_KEY`|Server-side extraction credential|
 |`NEXT\_PUBLIC\_APP\_URL`|Public app URL for callbacks/links|
 
 Use placeholders only in `.env.example`. If an optional integration is not configured, show a clear fallback. Demo mode must be labelled.
 
 ## Database and demo data
 
-Use migrations for schema changes. Document the actual migration and seed commands after implementation.
+Apply SQL migrations in `supabase/migrations/` to the Supabase project before using real accounts. The initial account migration creates profiles, private personal households, household memberships and RLS-protected subscription storage. No demo seed is applied to authenticated accounts.
 
 Demo data should include three adult demo members and examples across OTT, music, AI productivity, cloud storage and telecom. Include duplicate records, an annual subscription, an unknown sharing rule, a stale catalog item and a hidden subscription. Use fictional or clearly demo-labelled prices unless official current prices are verified.
 
-Demo mode must be labelled and must not imply changes persist to real accounts. Do not mix demo data with authenticated users' data.
+Demo mode must be labelled and must not imply changes persist to real accounts. Demo data is browser-local and is not loaded into authenticated accounts. New authenticated users start with an empty private household. Family invitations and shared household access are not implemented yet.
 
 ## Testing
 
@@ -430,6 +432,10 @@ At minimum, test:
 11. Invalid/oversized uploads are rejected.
 12. Leave/delete behavior works.
 13. Premium entitlements are server-enforced if implemented.
+14. Unauthenticated users cannot access app pages or the Gmail connector when Supabase is configured.
+15. Authenticated accounts can read or mutate only their own subscriptions.
+16. New accounts receive a private household and member row through the signup trigger.
+17. Live Gmail scans require a signed-in account and enforce the five-scan daily quota across devices.
 
 Run the available checks, for example:
 
@@ -497,19 +503,20 @@ The app may not contain every household subscription. Show audit progress and do
 
 ### Sprint 1 — Core MVP (2–3 days)
 
-* App shell, demo mode or configured authentication.
-* Household/subscription CRUD.
+* Email/password account creation and sign-in with protected application routes.
+* Private per-account household and subscription CRUD with RLS.
 * Dashboard and calculations.
 * Duplicate review.
 * Small sourced catalog.
 * Import review flow or explicit manual fallback.
+* Gmail OAuth associated with the signed-in account.
 * Core access tests and deployable build.
 
 ### Sprint 2 — Controlled beta
 
-* Complete invite/member lifecycle.
-* Verify RLS and cross-member access.
-* Finish deletion and privacy notices.
+* Complete family invitations and member lifecycle.
+* Add cross-household and privacy-redaction RLS tests before enabling sharing.
+* Finish account deletion and privacy notices.
 * Improve import handling.
 * Test with consenting adult households.
 

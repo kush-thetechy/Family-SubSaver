@@ -5,6 +5,8 @@ import {
   isSessionEncryptionConfigured,
   setSessionCookie,
 } from "@/lib/connectors/server-token-store";
+import { isSupabaseConfigured } from "@/lib/supabase";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 interface GoogleTokenResponse {
   access_token?: string;
@@ -46,6 +48,13 @@ function redirectToImport(
 export async function GET(request: Request) {
   const callbackUrl = new URL(request.url);
   const appUrl = getAppUrl(request);
+  if (!isSupabaseConfigured) {
+    return redirectToImport(
+      "Live Gmail scans require a configured, signed-in account.",
+      appUrl
+    );
+  }
+
   const providerError = callbackUrl.searchParams.get("error");
   const code = callbackUrl.searchParams.get("code");
   const returnedState = callbackUrl.searchParams.get("state");
@@ -115,11 +124,21 @@ export async function GET(request: Request) {
       // Non-fatal
     }
 
-    // Store tokens securely in server-side session registry
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) {
+      return redirectToImport(
+        "Please sign in to your Family Subscription Saver account before connecting Gmail.",
+        appUrl
+      );
+    }
+    const appUserId = data.user.id;
+
+    // Store tokens securely in a session bound to the signed-in app account.
     // Tokens are NEVER sent to the client or stored in browser-readable cookies
     const expiryMs = Date.now() + (tokenData.expires_in ?? 3600) * 1000;
     const session = createServerSession({
-      userId: userEmail || "live_user",
+      userId: appUserId,
       email: userEmail,
       googleAccessToken: tokenData.access_token,
       googleRefreshToken: tokenData.refresh_token,

@@ -21,7 +21,7 @@ export default function HouseholdPage() {
     household,
     members,
     currentProfile,
-    allProfiles,
+    isDemoMode,
     switchActiveProfile,
     inviteMember,
     removeMember,
@@ -66,14 +66,23 @@ export default function HouseholdPage() {
             Manage who belongs to &ldquo;{household.name}&rdquo; and configure privacy boundaries
           </p>
         </div>
-        <button
-          onClick={() => setIsInviteOpen(true)}
-          className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm shadow-sm transition self-start sm:self-auto"
-        >
-          <UserPlus className="w-4 h-4" />
-          Invite Family Member
-        </button>
+        {isDemoMode && (
+          <button
+            onClick={() => setIsInviteOpen(true)}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm shadow-sm transition self-start sm:self-auto"
+          >
+            <UserPlus className="w-4 h-4" />
+            Invite Family Member
+          </button>
+        )}
       </div>
+
+      {!isDemoMode && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          Family invitations and shared household access are not enabled yet.
+          Your account currently has a private household.
+        </div>
+      )}
 
       {/* Role & Privacy Policy Box */}
       <div className="bg-slate-100/90 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 text-xs text-slate-600 dark:text-slate-300">
@@ -161,6 +170,7 @@ export default function HouseholdPage() {
               </div>
 
               {/* Actions */}
+              {isDemoMode && (
               <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                 {!isCurrentUser ? (
                   <button
@@ -188,6 +198,7 @@ export default function HouseholdPage() {
                   </button>
                 )}
               </div>
+              )}
             </div>
           );
         })}
@@ -298,4 +309,3 @@ export default function HouseholdPage() {
     </div>
   );
 }
-

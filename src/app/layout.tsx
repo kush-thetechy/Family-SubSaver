@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AppProvider } from "@/context/AppContext";
 import { Navigation } from "@/components/Navigation";
+import { ClarityAnalytics } from "@/components/ClarityAnalytics";
 
 export const metadata: Metadata = {
   title: "Family Subscription Saver | Indian Household Subscription Hub",
@@ -31,12 +32,15 @@ export default function RootLayout({
       <body className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased pb-20 md:pb-8">
         <AppProvider>
           <Navigation />
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <main
+            data-clarity-mask="true"
+            className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
+          >
             {children}
           </main>
+          <ClarityAnalytics />
         </AppProvider>
       </body>
     </html>
   );
 }
-

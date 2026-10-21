@@ -7,6 +7,8 @@ import {
 } from "@/types";
 import { rupeesToPaise } from "../calculations";
 
+export const MAX_GMAIL_SCANS_PER_DAY = 5;
+
 export interface GmailHeader {
   name: string;
   value: string;
@@ -920,6 +922,8 @@ export interface ScanOptions {
 
 export type GmailHistoryRange = "30d" | "45d";
 
+export const MAX_GMAIL_MESSAGES_PER_SCAN = 200;
+
 /** Clamp every caller, including direct API requests, to the supported 30–45 day window. */
 export function normalizeGmailHistoryRange(value?: unknown): GmailHistoryRange {
   return value === "30d" ? "30d" : "45d";
@@ -999,17 +1003,15 @@ const MANDATE_KEYWORDS = [
   "nach mandate",
   "upi autopay",
   "ach debit",
-  "mandate",
   "mandate registration",
   "mandate registered",
   "standing instruction",
   "merchant mandate",
   "card mandate",
   "si hub",
-  "autopay",
-  "auto payment",
-  "auto debit",
-  "auto-debit",
+  "autopay debit",
+  "auto debit alert",
+  "auto-debit alert",
   "merchant initiated transaction",
   "recurring transaction",
   "recurring debit",
@@ -1084,6 +1086,7 @@ export async function searchGmailMultiLane(
   candidates: ConsolidatedSubscriptionCandidate[];
   totalMessagesScanned: number;
   lanesScanned: string[];
+  warnings: string[];
 }> {
   const historyRange = normalizeGmailHistoryRange(options.historyRange);
   const dateFilter = `newer_than:${historyRange} `;
@@ -1109,16 +1112,26 @@ export async function searchGmailMultiLane(
   ];
 
   const uniqueMessageIds = new Set<string>();
+  const warnings: string[] = [];
+  const failedSearchLanes: string[] = [];
+  const scannedLanes: string[] = [];
+  let successfulSearchLanes = 0;
+  let firstSearchError: unknown;
+  let truncated = false;
 
   // Run paginated list across lanes. Gmail returns IDs here; full contents are
   // fetched only after a message has matched the keyword query.
-  for (const lane of lanes) {
+  for (let laneIndex = 0; laneIndex < lanes.length; laneIndex += 1) {
+    const lane = lanes[laneIndex];
     try {
       let pageToken: string | undefined;
       do {
         const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         listUrl.searchParams.set("q", lane.query);
-        listUrl.searchParams.set("maxResults", "100");
+        listUrl.searchParams.set(
+          "maxResults",
+          String(Math.min(100, MAX_GMAIL_MESSAGES_PER_SCAN - uniqueMessageIds.size))
+        );
         if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
         const listRes = await fetchGmailJson<{
@@ -1129,18 +1142,46 @@ export async function searchGmailMultiLane(
         if (listRes.messages) {
           for (const message of listRes.messages) {
             uniqueMessageIds.add(message.id);
+            if (uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN) break;
           }
+        }
+        if (uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN) {
+          truncated = Boolean(
+            listRes.nextPageToken || laneIndex < lanes.length - 1
+          );
+          break;
         }
         pageToken = listRes.nextPageToken;
       } while (pageToken);
-    } catch {
-      // Continue with other lanes if one lane throttles
+      successfulSearchLanes += 1;
+      scannedLanes.push(lane.name);
+    } catch (error) {
+      firstSearchError ??= error;
+      failedSearchLanes.push(lane.name);
     }
+    if (uniqueMessageIds.size >= MAX_GMAIL_MESSAGES_PER_SCAN) {
+      break;
+    }
+  }
+
+  if (successfulSearchLanes === 0 && firstSearchError) {
+    throw firstSearchError;
+  }
+  if (failedSearchLanes.length > 0) {
+    warnings.push(
+      "Some Gmail search categories could not be checked; results may be incomplete."
+    );
+  }
+  if (truncated) {
+    warnings.push(
+      `This scan reached the ${MAX_GMAIL_MESSAGES_PER_SCAN}-message limit; results may be incomplete.`
+    );
   }
 
   // Fetch only query-matched message contents in parallel batches of 5.
   const messageIdList = Array.from(uniqueMessageIds);
   const evidenceList: DiscoveryEvidence[] = [];
+  let failedMessageFetches = 0;
 
   for (let i = 0; i < messageIdList.length; i += 5) {
     const chunk = messageIdList.slice(i, i + 5);
@@ -1154,6 +1195,7 @@ export async function searchGmailMultiLane(
           if (!hasSubscriptionEmailKeywords(msg)) return null;
           return parseGeneralGmailMessage(msg);
         } catch {
+          failedMessageFetches += 1;
           return null;
         }
       })
@@ -1162,6 +1204,11 @@ export async function searchGmailMultiLane(
     for (const ev of chunkResults) {
       if (ev) evidenceList.push(ev);
     }
+  }
+  if (failedMessageFetches > 0) {
+    warnings.push(
+      "Some matched Gmail messages could not be read; results may be incomplete."
+    );
   }
 
   const candidates = consolidateEvidenceToCandidates(
@@ -1172,7 +1219,8 @@ export async function searchGmailMultiLane(
   return {
     candidates,
     totalMessagesScanned: messageIdList.length,
-    lanesScanned: lanes.map((l) => l.name),
+    lanesScanned: scannedLanes,
+    warnings,
   };
 }
 

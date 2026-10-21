@@ -1,6 +1,8 @@
 import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { isSessionEncryptionConfigured } from "@/lib/connectors/server-token-store";
+import { isSupabaseConfigured } from "@/lib/supabase";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 function getAppUrl(request: Request): string {
   return (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(
@@ -10,6 +12,28 @@ function getAppUrl(request: Request): string {
 }
 
 export async function GET(request: Request) {
+  if (!isSupabaseConfigured) {
+    return NextResponse.json({
+      configured: false,
+      authUrl: null,
+      message:
+        "Live Gmail scans require a configured Supabase account. Apply the account database migrations and sign in first.",
+    });
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError || !authData.user) {
+    return NextResponse.json(
+      {
+        configured: false,
+        authUrl: null,
+        message: "Sign in to your account before connecting Gmail.",
+      },
+      { status: 401 }
+    );
+  }
+
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
@@ -64,4 +88,3 @@ export async function GET(request: Request) {
 
   return response;
 }
-
