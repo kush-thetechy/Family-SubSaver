@@ -134,6 +134,7 @@ export type DiscoveryEvidenceType =
   | "transaction_alert"
   | "payment_failure"
   | "cancellation_notice"
+  | "service_event"
   | "screenshot_ocr";
 
 export interface DiscoveryEvidence {
@@ -144,6 +145,7 @@ export interface DiscoveryEvidence {
   sender?: string;
   subject?: string;
   date?: string; // ISO date or email date
+  renewal_date?: string;
   amount_rupees?: number;
   currency: string; // e.g. "INR"
   billing_channel?: string;
@@ -168,7 +170,7 @@ export interface ConsolidatedSubscriptionCandidate {
   service_name: string;
   plan_name?: string;
   category: SubscriptionCategory;
-  amount_rupees: number;
+  amount_rupees?: number;
   currency: string;
   billing_cycle: BillingCycle | "unknown";
   billing_channel: string;
@@ -194,4 +196,42 @@ export interface ConsolidatedSubscriptionCandidate {
     service_name: string;
     reason: string;
   }[];
+}
+
+export type GmailHistoryRange = "30d" | "45d" | "13m";
+
+export type GmailCoverageLaneStatus =
+  | "complete"
+  | "truncated"
+  | "failed"
+  | "not_started";
+
+export interface GmailScanLaneCoverage {
+  key: string;
+  label: string;
+  status: GmailCoverageLaneStatus;
+  pagesFetched: number;
+  messagesMatched: number;
+  uniqueMessagesSelected: number;
+  errorStatus?: number;
+}
+
+export interface GmailScanCoverage {
+  id?: string;
+  historyRange: GmailHistoryRange;
+  windowStart: string;
+  windowEnd: string;
+  pagesFetched: number;
+  messagesMatched: number;
+  uniqueMessagesSelected: number;
+  messagesAttempted: number;
+  messagesFetched: number;
+  messageFetchFailures: number;
+  paginationComplete: boolean;
+  truncated: boolean;
+  attachmentsScanned: false;
+  laneCoverage: GmailScanLaneCoverage[];
+  fatalErrorStatus?: number;
+  recorded?: boolean;
+  createdAt?: string;
 }

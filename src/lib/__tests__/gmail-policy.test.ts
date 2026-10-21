@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  GMAIL_CONSENT_VERSION,
   getGmailMode,
   isGmailEnabledForUser,
 } from "../connectors/gmail-policy";
@@ -9,6 +10,10 @@ afterEach(() => {
 });
 
 describe("Gmail release controls", () => {
+  it("requires the updated consent version for the expanded history window", () => {
+    expect(GMAIL_CONSENT_VERSION).toBe("gmail-discovery-v2-13m");
+  });
+
   it("fails closed when the mode is missing or invalid", () => {
     vi.stubEnv("GMAIL_MODE", "");
     expect(getGmailMode()).toBe("disabled");

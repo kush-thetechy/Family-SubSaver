@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   GmailMessage,
-  GmailApiError,
   MAX_GMAIL_MESSAGES_PER_SCAN,
   parseGmailMessage,
   parseGeneralGmailMessage,
@@ -10,6 +9,8 @@ import {
   cleanHtmlText,
   getBodyText,
   consolidateEvidenceToCandidates,
+  getGmailHistoryWindow,
+  normalizeGmailHistoryRange,
   searchGmailMultiLane,
 } from "../connectors/gmail-service";
 import { DiscoveryEvidence, Subscription } from "@/types";
@@ -53,6 +54,54 @@ function makeMessage(
 }
 
 describe("Gmail invoice & receipt extraction", () => {
+  it("recognizes handoff-listed services without assigning a price that was not found", () => {
+    const perplexityMessage = makeMessage(
+      "Welcome to Perplexity Pro. Your membership is active.",
+      "Your Perplexity Pro membership is active",
+      "billing@perplexity.ai"
+    );
+    const evidence = parseGeneralGmailMessage(perplexityMessage);
+
+    expect(evidence).toMatchObject({
+      evidence_type: "service_event",
+      merchant_raw: "Perplexity",
+      amount_rupees: undefined,
+    });
+    const [candidate] = consolidateEvidenceToCandidates([evidence!]);
+    expect(candidate).toMatchObject({
+      service_name: "Perplexity",
+      status: "needs_confirmation",
+      amount_rupees: undefined,
+    });
+    expect(candidate.needs_review_reasons).toContain(
+      "Price is unknown; confirm the current amount before saving"
+    );
+  });
+
+  it("does not label an unspecified OpenAI product as ChatGPT", () => {
+    const evidence = parseGeneralGmailMessage(
+      makeMessage(
+        "Your OpenAI subscription was activated.",
+        "OpenAI subscription activated",
+        "billing@openai.com"
+      )
+    );
+
+    expect(evidence?.merchant_raw).toBe("OpenAI");
+  });
+
+  it("normalizes a 13-month window by calendar month and clamps month-end dates", () => {
+    const window = getGmailHistoryWindow(
+      "13m",
+      new Date("2026-03-31T10:15:00.000Z")
+    );
+
+    expect(window.start.toISOString()).toBe("2025-02-28T10:15:00.000Z");
+    expect(window.end.toISOString()).toBe("2026-03-31T10:15:00.000Z");
+    expect(normalizeGmailHistoryRange("13m")).toBe("13m");
+    expect(normalizeGmailHistoryRange("invalid")).toBe("45d");
+  });
+
   it("bounds MIME traversal and skips attachment parts", () => {
     const text = Buffer.from("subscription invoice").toString("base64url");
     const attachment = Buffer.from("private attachment").toString("base64url");
@@ -224,12 +273,13 @@ Apple Services
 Invoice Date: 28 Sep 2026
 Order ID: MLK89271982
 Document No: 192847192
+SEC SAC 998434
 
 Billed To:
 Rahul Sharma
 
 YouTube Premium (Monthly)
-Renews 28 October 2026
+Renews 28 October
 Subtotal: ₹165.25
 IGST (18%): ₹29.75
 Total: ₹195.00
@@ -266,6 +316,7 @@ Payment Method: MasterCard ending in 1234
     expect(evidence?.currency).toBe("INR");
     expect(evidence?.billing_channel).toBe("Apple");
     expect(evidence?.frequency_raw).toBe("monthly");
+    expect(evidence?.renewal_date).toBe("2026-10-28");
 
     const candidates = consolidateEvidenceToCandidates([evidence!]);
     expect(candidates).toHaveLength(1);
@@ -273,6 +324,8 @@ Payment Method: MasterCard ending in 1234
     expect(candidates[0].amount_rupees).toBe(195);
     expect(candidates[0].billing_cycle).toBe("monthly");
     expect(candidates[0].status).toBe("likely_active");
+    expect(candidates[0].renewal_date).toBe("2026-10-28");
+    expect(candidates[0].renewal_date_inferred).toBe(false);
   });
 
   // Reference 3: HDFC E-Mandate Registration
@@ -503,9 +556,19 @@ describe("Gmail scan limits and failures", () => {
       expect(MAX_GMAIL_MESSAGES_PER_SCAN).toBe(200);
       expect(result.totalMessagesScanned).toBe(MAX_GMAIL_MESSAGES_PER_SCAN);
       expect(result.warnings).toContain(
-        "This scan reached the 200-message limit; results may be incomplete."
+        "Coverage is incomplete because the scan reached a pagination or 200-message safety limit."
       );
       expect(result.lanesScanned).toEqual(["Store Receipts & Renewals"]);
+      expect(result.coverage.truncated).toBe(true);
+      expect(result.coverage.paginationComplete).toBe(false);
+      expect(result.coverage.laneCoverage[0]).toMatchObject({
+        status: "complete",
+        pagesFetched: 2,
+        uniqueMessagesSelected: 200,
+      });
+      expect(result.coverage.laneCoverage.slice(1).every(
+        (lane) => lane.status === "not_started"
+      )).toBe(true);
       expect(listRequests).toHaveLength(2);
       expect(fetchedMessages).toHaveLength(MAX_GMAIL_MESSAGES_PER_SCAN);
     } finally {
@@ -513,21 +576,25 @@ describe("Gmail scan limits and failures", () => {
     }
   });
 
-  it("fails explicitly when every Gmail search lane fails", async () => {
+  it("reports every failed search lane rather than returning empty success-shaped coverage", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({}, 503));
     vi.stubGlobal("fetch", fetchMock);
 
     try {
-      await expect(
-        searchGmailMultiLane("test-access-token")
-      ).rejects.toBeInstanceOf(GmailApiError);
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const result = await searchGmailMultiLane("test-access-token");
+      expect(result.candidates).toHaveLength(0);
+      expect(result.coverage.paginationComplete).toBe(false);
+      expect(result.coverage.laneCoverage).toHaveLength(5);
+      expect(result.coverage.laneCoverage.every(
+        (lane) => lane.status === "failed" && lane.errorStatus === 503
+      )).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(5);
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it("surfaces authorization failures while fetching matched messages", async () => {
+  it("reports authorization failures while fetching matched messages", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/messages")) {
@@ -538,9 +605,10 @@ describe("Gmail scan limits and failures", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     try {
-      await expect(
-        searchGmailMultiLane("test-access-token")
-      ).rejects.toMatchObject({ status: 401 });
+      const result = await searchGmailMultiLane("test-access-token");
+      expect(result.fatalErrorStatus).toBe(401);
+      expect(result.coverage.messageFetchFailures).toBe(1);
+      expect(result.coverage.paginationComplete).toBe(false);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -559,7 +627,7 @@ describe("Gmail scan limits and failures", () => {
       await searchGmailMultiLane("test-access-token", {
         historyRange: "45d",
       });
-      expect(searchQueries).toHaveLength(3);
+      expect(searchQueries).toHaveLength(5);
       expect(
         searchQueries.every(
           (query) =>
@@ -567,9 +635,86 @@ describe("Gmail scan limits and failures", () => {
         )
       ).toBe(true);
       expect(searchQueries[0]).toContain("receipt");
-      expect(searchQueries[2]).toContain("mandate");
+      expect(searchQueries[4]).toContain("mandate");
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("uses a calendar-bounded 13-month Gmail query across all search lanes", async () => {
+    const searchQueries: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      searchQueries.push(url.searchParams.get("q") || "");
+      return jsonResponse({ messages: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await searchGmailMultiLane("test-access-token", {
+        historyRange: "13m",
+      });
+      expect(searchQueries).toHaveLength(5);
+      expect(
+        searchQueries.every((query) =>
+          /^after:\d{4}\/\d{2}\/\d{2} -in:spam -in:trash /.test(query)
+        )
+      ).toBe(true);
+      expect(searchQueries[2].toLowerCase()).toContain("perplexity");
+      expect(searchQueries[3]).toContain("membership");
+      expect(searchQueries[4]).toContain("mandate");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("filters matched messages outside the exact 13-month timestamp window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T00:00:00.000Z"));
+    const inRange = makeMessage(
+      "Netflix subscription charged INR 499 monthly.",
+      "Netflix monthly subscription receipt",
+      "billing@netflix.com",
+      "Sun, 21 Sep 2025 00:00:00 GMT"
+    );
+    inRange.id = "in-range";
+    const outOfRange = makeMessage(
+      "Spotify subscription charged INR 99 monthly.",
+      "Spotify monthly subscription receipt",
+      "billing@spotify.com",
+      "Sat, 20 Sep 2025 23:59:59 GMT"
+    );
+    outOfRange.id = "out-of-range";
+
+    const messages = new Map([
+      [inRange.id, inRange],
+      [outOfRange.id, outOfRange],
+    ]);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/messages")) {
+        return jsonResponse({
+          messages: [{ id: inRange.id }, { id: outOfRange.id }],
+        });
+      }
+      return jsonResponse(
+        messages.get(url.pathname.split("/").pop() || "") ?? {}
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const result = await searchGmailMultiLane("test-access-token", {
+        historyRange: "13m",
+      });
+      expect(result.totalMessagesScanned).toBe(2);
+      expect(result.coverage.messagesFetched).toBe(2);
+      expect(
+        result.candidates.map((candidate) => candidate.service_name)
+      ).toEqual(["Netflix"]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
     }
   });
 
