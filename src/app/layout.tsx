@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AppProvider } from "@/context/AppContext";
+import { AuthStatusNotice } from "@/components/AuthStatusNotice";
 import { Navigation } from "@/components/Navigation";
-import { ClarityAnalytics } from "@/components/ClarityAnalytics";
 
 export const metadata: Metadata = {
   title: "Family Subscription Saver | Indian Household Subscription Hub",
@@ -36,9 +36,9 @@ export default function RootLayout({
             data-clarity-mask="true"
             className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
           >
+            <AuthStatusNotice />
             {children}
           </main>
-          <ClarityAnalytics />
         </AppProvider>
       </body>
     </html>

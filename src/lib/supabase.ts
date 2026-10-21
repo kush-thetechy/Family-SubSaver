@@ -6,7 +6,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 export const isSupabaseConfigured =
   Boolean(supabaseUrl) &&
   Boolean(supabaseAnonKey) &&
-  !supabaseUrl.includes("your-project");
+  !supabaseUrl.includes("your-project") &&
+  !supabaseAnonKey.includes("your-anon-key");
 
 let browserClient: ReturnType<typeof createBrowserClient> | null = null;
 

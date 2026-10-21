@@ -5,20 +5,44 @@ import {
   isSessionEncryptionConfigured,
   setSessionCookie,
 } from "@/lib/connectors/server-token-store";
+import {
+  hasCurrentGmailConsent,
+  isGmailEnabledForUser,
+} from "@/lib/connectors/gmail-policy";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 interface GoogleTokenResponse {
   access_token?: string;
-  refresh_token?: string;
   expires_in?: number;
+  scope?: string;
+}
+
+interface GmailProfileResponse {
+  emailAddress?: string;
+}
+
+interface OAuthFlowState {
+  state: string;
+  codeVerifier: string;
+  userId: string;
 }
 
 function getAppUrl(request: Request): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(
-    /\/$/,
-    ""
-  );
+  const configuredUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!configuredUrl && process.env.NODE_ENV === "production") return "";
+  try {
+    const appUrl = new URL(configuredUrl || new URL(request.url).origin);
+    if (
+      !["http:", "https:"].includes(appUrl.protocol) ||
+      (process.env.NODE_ENV === "production" && appUrl.protocol !== "https:")
+    ) {
+      return "";
+    }
+    return appUrl.origin;
+  } catch {
+    return "";
+  }
 }
 
 function redirectToImport(
@@ -35,6 +59,7 @@ function redirectToImport(
   }
 
   const response = NextResponse.redirect(destination);
+  response.headers.set("Cache-Control", "no-store");
   response.cookies.set("fss_gmail_oauth_state", "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -48,6 +73,18 @@ function redirectToImport(
 export async function GET(request: Request) {
   const callbackUrl = new URL(request.url);
   const appUrl = getAppUrl(request);
+  if (!appUrl) {
+    return NextResponse.json(
+      { error: "The server app URL is not configured." },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (callbackUrl.origin !== new URL(appUrl).origin) {
+    return NextResponse.json(
+      { error: "Gmail OAuth callback origin is not configured correctly." },
+      { status: 400, headers: { "Cache-Control": "no-store" } }
+    );
+  }
   if (!isSupabaseConfigured) {
     return redirectToImport(
       "Live Gmail scans require a configured, signed-in account.",
@@ -59,13 +96,26 @@ export async function GET(request: Request) {
   const code = callbackUrl.searchParams.get("code");
   const returnedState = callbackUrl.searchParams.get("state");
   const stateCookie = cookies().get("fss_gmail_oauth_state")?.value;
+  let flowState: OAuthFlowState | null = null;
+  try {
+    flowState = stateCookie ? (JSON.parse(stateCookie) as OAuthFlowState) : null;
+  } catch {
+    flowState = null;
+  }
 
   if (providerError) {
     return redirectToImport("Google authorization was cancelled.", appUrl);
   }
-  if (!code || !returnedState || !stateCookie || returnedState !== stateCookie) {
+  if (
+    !code ||
+    !returnedState ||
+    !flowState?.state ||
+    returnedState !== flowState.state ||
+    !flowState.codeVerifier ||
+    !flowState.userId
+  ) {
     return redirectToImport(
-      "Gmail connection verification failed (CSRF mismatch). Please try connecting again.",
+      "Gmail connection verification failed. Please start again.",
       appUrl
     );
   }
@@ -80,9 +130,35 @@ export async function GET(request: Request) {
   }
   if (!isSessionEncryptionConfigured()) {
     return redirectToImport(
-      "Gmail session encryption is not configured on the server. Set FSS_GMAIL_SESSION_SECRET and try again.",
+      "Gmail session encryption is not configured on the server.",
       appUrl
     );
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError || !authData.user || authData.user.id !== flowState.userId) {
+    return redirectToImport(
+      "Your sign-in changed during Google authorization. Please start the connection again.",
+      appUrl
+    );
+  }
+  if (!isGmailEnabledForUser(authData.user.id)) {
+    return redirectToImport(
+      "Gmail discovery is disabled for this account by the server release gate.",
+      appUrl
+    );
+  }
+  try {
+    if (!(await hasCurrentGmailConsent(supabase, authData.user.id))) {
+      return redirectToImport(
+        "Gmail consent is missing or has been withdrawn. Review the disclosure and reconnect.",
+        appUrl
+      );
+    }
+  } catch (error) {
+    console.error("Could not verify Gmail consent during callback:", error);
+    return redirectToImport("Gmail consent could not be verified.", appUrl);
   }
 
   try {
@@ -95,7 +171,9 @@ export async function GET(request: Request) {
         client_secret: clientSecret,
         redirect_uri: `${appUrl}/api/connectors/gmail/callback`,
         grant_type: "authorization_code",
+        code_verifier: flowState.codeVerifier,
       }),
+      cache: "no-store",
     });
 
     if (!tokenResponse.ok) {
@@ -106,43 +184,42 @@ export async function GET(request: Request) {
     }
 
     const tokenData = (await tokenResponse.json()) as GoogleTokenResponse;
-    if (!tokenData.access_token) {
-      return redirectToImport("Google did not return an access token.", appUrl);
-    }
-
-    // Fetch user profile email
-    let userEmail: string | null = null;
-    try {
-      const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      });
-      if (userRes.ok) {
-        const userData = (await userRes.json()) as { email?: string };
-        userEmail = userData.email || null;
-      }
-    } catch {
-      // Non-fatal
-    }
-
-    const supabase = createSupabaseServerClient();
-    const { data, error } = await supabase.auth.getUser();
-    if (error || !data.user) {
+    const grantedScopes = (tokenData.scope || "").split(/\s+/).filter(Boolean);
+    const expectedScope = "https://www.googleapis.com/auth/gmail.readonly";
+    if (
+      !tokenData.access_token ||
+      grantedScopes.length !== 1 ||
+      grantedScopes[0] !== expectedScope
+    ) {
       return redirectToImport(
-        "Please sign in to your Family Subscription Saver account before connecting Gmail.",
+        "Google did not grant exactly the requested Gmail read-only permission. Please reconnect and review the requested access.",
         appUrl
       );
     }
-    const appUserId = data.user.id;
 
-    // Store tokens securely in a session bound to the signed-in app account.
-    // Tokens are NEVER sent to the client or stored in browser-readable cookies
-    const expiryMs = Date.now() + (tokenData.expires_in ?? 3600) * 1000;
+    let userEmail: string | null = null;
+    try {
+      const profileResponse = await fetch(
+        "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+        {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+          cache: "no-store",
+        }
+      );
+      if (profileResponse.ok) {
+        const profile =
+          (await profileResponse.json()) as GmailProfileResponse;
+        userEmail = profile.emailAddress || null;
+      }
+    } catch {
+      userEmail = null;
+    }
+
     const session = createServerSession({
-      userId: appUserId,
+      userId: authData.user.id,
       email: userEmail,
       googleAccessToken: tokenData.access_token,
-      googleRefreshToken: tokenData.refresh_token,
-      tokenExpiry: expiryMs,
+      tokenExpiry: Date.now() + (tokenData.expires_in ?? 3600) * 1000,
       isDemo: false,
     });
 

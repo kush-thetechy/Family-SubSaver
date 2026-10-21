@@ -8,10 +8,26 @@ import {
   parseAppleReceipt,
   parseBankMandateEmail,
   cleanHtmlText,
+  getBodyText,
   consolidateEvidenceToCandidates,
   searchGmailMultiLane,
 } from "../connectors/gmail-service";
 import { DiscoveryEvidence, Subscription } from "@/types";
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ "content-length": String(bytes.byteLength) }),
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    }),
+  } as Response;
+}
 
 function makeMessage(
   content: string,
@@ -23,6 +39,7 @@ function makeMessage(
   return {
     id: "message-1",
     snippet: "",
+    internalDate: String(Date.parse(date)),
     payload: {
       mimeType,
       headers: [
@@ -36,6 +53,27 @@ function makeMessage(
 }
 
 describe("Gmail invoice & receipt extraction", () => {
+  it("bounds MIME traversal and skips attachment parts", () => {
+    const text = Buffer.from("subscription invoice").toString("base64url");
+    const attachment = Buffer.from("private attachment").toString("base64url");
+    const result = getBodyText({
+      mimeType: "multipart/mixed",
+      parts: [
+        {
+          mimeType: "text/plain",
+          body: { data: text },
+        },
+        {
+          mimeType: "text/plain",
+          filename: "invoice.txt",
+          body: { data: attachment, attachmentId: "attachment-1" },
+        },
+      ],
+    });
+
+    expect(result).toEqual(["subscription invoice"]);
+  });
+
   it("extracts the amount and billing cycle from standard email content", () => {
     const result = parseGmailMessage(
       makeMessage("Spotify Premium: INR 1,199.00 billed for 12 months")
@@ -446,24 +484,16 @@ describe("Gmail scan limits and failures", () => {
         listRequests.push(url.toString());
         const pageToken = url.searchParams.get("pageToken");
         const offset = pageToken ? 100 : 0;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
+        return jsonResponse({
             messages: Array.from({ length: 100 }, (_, index) => ({
               id: `message-${offset + index}`,
             })),
             ...(pageToken ? {} : { nextPageToken: "next-page" }),
-          }),
-        } as Response;
+          });
       }
 
       fetchedMessages.push(url.pathname);
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ id: url.pathname.split("/").pop() }),
-      } as Response;
+      return jsonResponse({ id: url.pathname.split("/").pop() });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -484,13 +514,7 @@ describe("Gmail scan limits and failures", () => {
   });
 
   it("fails explicitly when every Gmail search lane fails", async () => {
-    const fetchMock = vi.fn(async () =>
-      ({
-        ok: false,
-        status: 503,
-        json: async () => ({}),
-      }) as Response
-    );
+    const fetchMock = vi.fn(async () => jsonResponse({}, 503));
     vi.stubGlobal("fetch", fetchMock);
 
     try {
@@ -498,6 +522,52 @@ describe("Gmail scan limits and failures", () => {
         searchGmailMultiLane("test-access-token")
       ).rejects.toBeInstanceOf(GmailApiError);
       expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("surfaces authorization failures while fetching matched messages", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/messages")) {
+        return jsonResponse({ messages: [{ id: "matched-message" }] });
+      }
+      return jsonResponse({}, 401);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(
+        searchGmailMultiLane("test-access-token")
+      ).rejects.toMatchObject({ status: 401 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("uses bounded recent queries that exclude spam and trash", async () => {
+    const searchQueries: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      searchQueries.push(url.searchParams.get("q") || "");
+      return jsonResponse({ messages: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await searchGmailMultiLane("test-access-token", {
+        historyRange: "45d",
+      });
+      expect(searchQueries).toHaveLength(3);
+      expect(
+        searchQueries.every(
+          (query) =>
+            query.startsWith("newer_than:45d -in:spam -in:trash ")
+        )
+      ).toBe(true);
+      expect(searchQueries[0]).toContain("receipt");
+      expect(searchQueries[2]).toContain("mandate");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -517,11 +587,7 @@ describe("Gmail scan limits and failures", () => {
         ? { messages: [{ id: unrelatedMessage.id }] }
         : unrelatedMessage;
 
-      return {
-        ok: true,
-        status: 200,
-        json: async () => json,
-      } as Response;
+      return jsonResponse(json);
     });
     vi.stubGlobal("fetch", fetchMock);
 

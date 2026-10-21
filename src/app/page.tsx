@@ -203,7 +203,9 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-3 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <span>Across 3 members</span>
+            <span>
+              Across {members.length} member{members.length === 1 ? "" : "s"}
+            </span>
             {summary.hiddenCountForOthers > 0 && (
               <span className="text-amber-600 dark:text-amber-400 font-medium">
                 {summary.hiddenCountForOthers} private

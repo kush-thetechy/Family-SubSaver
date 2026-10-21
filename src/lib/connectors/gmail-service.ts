@@ -16,7 +16,8 @@ export interface GmailHeader {
 
 export interface GmailMessagePart {
   mimeType?: string;
-  body?: { data?: string };
+  filename?: string;
+  body?: { data?: string; attachmentId?: string };
   parts?: GmailMessagePart[];
   headers?: GmailHeader[];
 }
@@ -24,6 +25,7 @@ export interface GmailMessagePart {
 export interface GmailMessage {
   id: string;
   snippet?: string;
+  internalDate?: string;
   payload?: GmailMessagePart;
 }
 
@@ -87,11 +89,59 @@ export function decodeBase64Url(data: string): string {
 }
 
 export function getBodyText(part: GmailMessagePart): string[] {
-  const body =
-    part.body?.data && (part.mimeType?.startsWith("text/") || !part.mimeType)
-      ? [decodeBase64Url(part.body.data)]
-      : [];
-  return [...body, ...(part.parts ?? []).flatMap(getBodyText)];
+  const maxDepth = 8;
+  const maxParts = 100;
+  const maxTextLength = 256_000;
+  const pending: Array<{ part: GmailMessagePart; depth: number }> = [
+    { part, depth: 0 },
+  ];
+  const textParts: string[] = [];
+  let visitedParts = 0;
+  let totalTextLength = 0;
+
+  while (
+    pending.length > 0 &&
+    visitedParts < maxParts &&
+    totalTextLength < maxTextLength
+  ) {
+    const current = pending.pop();
+    if (!current || current.depth > maxDepth) continue;
+    visitedParts += 1;
+
+    const currentPart = current.part;
+    const isAttachment = Boolean(
+      currentPart.filename || currentPart.body?.attachmentId
+    );
+    if (
+      !isAttachment &&
+      currentPart.body?.data &&
+      (currentPart.mimeType === "text/plain" ||
+        currentPart.mimeType === "text/html" ||
+        !currentPart.mimeType)
+    ) {
+      const remainingLength = maxTextLength - totalTextLength;
+      const decodedText = decodeBase64Url(currentPart.body.data).slice(
+        0,
+        remainingLength
+      );
+      textParts.push(decodedText);
+      totalTextLength += decodedText.length;
+    }
+
+    const children = currentPart.parts ?? [];
+    const remainingSlots = Math.max(
+      0,
+      maxParts - visitedParts - pending.length
+    );
+    const childCount = Math.min(children.length, remainingSlots);
+    for (let childIndex = childCount - 1; childIndex >= 0; childIndex -= 1) {
+      pending.push({
+        part: children[childIndex],
+        depth: current.depth + 1,
+      });
+    }
+  }
+  return textParts;
 }
 
 export function getHeader(headers: GmailHeader[] = [], name: string): string {
@@ -1063,6 +1113,7 @@ function hasSubscriptionEmailKeywords(message: GmailMessage): boolean {
 export async function fetchGmailJson<T>(url: string, accessToken: string): Promise<T> {
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -1072,7 +1123,41 @@ export async function fetchGmailJson<T>(url: string, accessToken: string): Promi
     );
   }
 
-  return (await response.json()) as T;
+  const maximumResponseBytes = 2 * 1024 * 1024;
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > maximumResponseBytes || !response.body) {
+    throw new GmailApiError(
+      "Gmail API response exceeded the processing limit.",
+      413
+    );
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maximumResponseBytes) {
+        await reader.cancel();
+        throw new GmailApiError(
+          "Gmail API response exceeded the processing limit.",
+          413
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+  } catch {
+    throw new GmailApiError("Gmail API returned an invalid response.", 502);
+  }
 }
 
 /**
@@ -1089,7 +1174,9 @@ export async function searchGmailMultiLane(
   warnings: string[];
 }> {
   const historyRange = normalizeGmailHistoryRange(options.historyRange);
-  const dateFilter = `newer_than:${historyRange} `;
+  const rangeDays = historyRange === "30d" ? 30 : 45;
+  const cutoffTime = Date.now() - rangeDays * 24 * 60 * 60 * 1000;
+  const dateFilter = `newer_than:${rangeDays}d -in:spam -in:trash `;
   const billingTerms = gmailAnyOf(BILLING_KEYWORDS);
   const recurringTerms = gmailAnyOf(SUBSCRIPTION_EVENT_KEYWORDS);
   const knownProviderTerms = gmailAnyOf(KNOWN_PROVIDER_SEARCH_TERMS);
@@ -1192,9 +1279,23 @@ export async function searchGmailMultiLane(
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`,
             accessToken
           );
+          const messageTimestamp = Number(msg.internalDate);
+          if (
+            !Number.isFinite(messageTimestamp) ||
+            messageTimestamp < cutoffTime ||
+            messageTimestamp > Date.now() + 5 * 60 * 1000
+          ) {
+            return null;
+          }
           if (!hasSubscriptionEmailKeywords(msg)) return null;
           return parseGeneralGmailMessage(msg);
-        } catch {
+        } catch (error) {
+          if (
+            error instanceof GmailApiError &&
+            (error.status === 401 || error.status === 403)
+          ) {
+            throw error;
+          }
           failedMessageFetches += 1;
           return null;
         }

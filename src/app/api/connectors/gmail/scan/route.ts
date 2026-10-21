@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import {
   clearSessionCookie,
@@ -13,6 +14,10 @@ import {
   searchGmailMultiLane,
   ScanOptions,
 } from "@/lib/connectors/gmail-service";
+import {
+  hasCurrentGmailConsent,
+  isGmailEnabledForUser,
+} from "@/lib/connectors/gmail-policy";
 import { Subscription } from "@/types";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -21,11 +26,6 @@ interface ScanRequestBody {
   mode?: "live" | "sandbox";
   historyRange?: string;
   existingSubscriptions?: Subscription[];
-}
-
-interface GoogleRefreshResponse {
-  access_token?: string;
-  expires_in?: number;
 }
 
 interface GmailScanQuota {
@@ -42,19 +42,51 @@ async function getSignedInUserId(): Promise<string | null> {
   return data.user?.id ?? null;
 }
 
-export async function GET() {
+function hasTrustedOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!origin || !appUrl) return false;
+  try {
+    return new URL(origin).origin === new URL(appUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+async function handleGet() {
   const hasGoogleConfiguration = Boolean(
     process.env.GOOGLE_CLIENT_ID &&
       process.env.GOOGLE_CLIENT_SECRET &&
       isSessionEncryptionConfigured()
   );
-  const configured = Boolean(
-    isSupabaseConfigured && hasGoogleConfiguration
-  );
   const session = getSessionFromRequestCookies();
   const userId = await getSignedInUserId();
+  const gmailEnabled = Boolean(userId && isGmailEnabledForUser(userId));
+  let consented = false;
+  if (userId && gmailEnabled) {
+    try {
+      consented = await hasCurrentGmailConsent(
+        createSupabaseServerClient(),
+        userId
+      );
+    } catch (error) {
+      console.error("Could not verify Gmail consent status:", error);
+      return NextResponse.json(
+        {
+          configured: false,
+          connected: false,
+          message: "Gmail consent could not be verified.",
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+  }
+  const configured = Boolean(
+    isSupabaseConfigured && hasGoogleConfiguration && gmailEnabled
+  );
   const connected = Boolean(
     configured &&
+    consented &&
     session &&
     !session.isDemo &&
     session.userId === userId
@@ -62,25 +94,48 @@ export async function GET() {
 
   return NextResponse.json({
     configured,
+    gmailEnabled,
     connected,
     email: connected ? session?.email ?? null : null,
+    connectionId:
+      connected && session
+        ? createHash("sha256").update(session.sessionId).digest("hex")
+        : null,
     message: !isSupabaseConfigured
       ? "Live Gmail scans require a configured Supabase account."
+      : !gmailEnabled
+        ? "Gmail discovery is disabled for this account by the server release gate."
+      : !consented
+        ? "Review the Gmail disclosure and consent before connecting."
       : !hasGoogleConfiguration
         ? "Live Gmail linking needs server OAuth and session-encryption settings."
         : undefined,
-  });
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
-export async function DELETE() {
+async function handleDelete(request: Request) {
+  if (!hasTrustedOrigin(request)) {
+    return NextResponse.json(
+      { success: false, error: "Untrusted request origin." },
+      { status: 403, headers: { "Cache-Control": "no-store" } }
+    );
+  }
   const session = getSessionFromRequestCookies();
   const userId = await getSignedInUserId();
+  if (!userId) {
+    const response = NextResponse.json(
+      { success: false, connected: false, error: "Sign in to disconnect Gmail." },
+      { status: 401, headers: { "Cache-Control": "no-store" } }
+    );
+    clearSessionCookie(response);
+    return response;
+  }
   let revokeFailed = false;
 
   if (
     session &&
     !session.isDemo &&
-    (!isSupabaseConfigured || session.userId === userId)
+    session.userId === userId
   ) {
     const token = session.googleRefreshToken || session.googleAccessToken;
     if (token) {
@@ -110,14 +165,23 @@ export async function DELETE() {
           connected: false,
           message: "Gmail disconnected and credentials removed.",
         },
-    { status: revokeFailed ? 502 : 200 }
+    {
+      status: revokeFailed ? 502 : 200,
+      headers: { "Cache-Control": "no-store" },
+    }
   );
 
   clearSessionCookie(response);
   return response;
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
+  if (!hasTrustedOrigin(request)) {
+    return NextResponse.json(
+      { success: false, error: "Untrusted request origin." },
+      { status: 403, headers: { "Cache-Control": "no-store" } }
+    );
+  }
   let parsedBody: unknown;
   try {
     parsedBody = await request.json();
@@ -158,6 +222,16 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  if (
+    body.historyRange !== undefined &&
+    body.historyRange !== "30d" &&
+    body.historyRange !== "45d"
+  ) {
+    return NextResponse.json(
+      { success: false, error: "Choose a 30-day or 45-day Gmail history window." },
+      { status: 400, headers: { "Cache-Control": "no-store" } }
+    );
+  }
 
   const session = getSessionFromRequestCookies();
   const historyRange = normalizeGmailHistoryRange(body.historyRange);
@@ -180,7 +254,7 @@ export async function POST(request: Request) {
         "Bank E-Mandates & Alerts",
       ],
       message: "Showing sample discovery candidates across Google Play, Apple, direct billing, and HDFC e-mandate. No live Gmail inbox was scanned.",
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   }
 
   if (!isSupabaseConfigured) {
@@ -210,83 +284,45 @@ export async function POST(request: Request) {
     return response;
   }
 
+  if (!isGmailEnabledForUser(userId)) {
+    return NextResponse.json(
+      { success: false, error: "Gmail discovery is disabled for this account by the server release gate." },
+      { status: 403, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  const supabase = createSupabaseServerClient();
+  try {
+    if (!(await hasCurrentGmailConsent(supabase, userId))) {
+      return NextResponse.json(
+        { success: false, error: "Current Gmail consent is required before scanning." },
+        { status: 403, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+  } catch (error) {
+    console.error("Could not verify Gmail consent before scan:", error);
+    return NextResponse.json(
+      { success: false, error: "Gmail consent could not be verified." },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
   let accessToken = session.googleAccessToken;
-  const refreshToken = session.googleRefreshToken;
   const tokenExpiry = session.tokenExpiry || 0;
-  let sessionToPersist = session;
 
-  // Refresh token if expired or expiring within 60s
   if (!accessToken || Date.now() > tokenExpiry - 60000) {
-    if (!refreshToken) {
-      const response = NextResponse.json(
-        {
-          success: false,
-          error: "Gmail session expired. Please reconnect your Google account to scan.",
-        },
-        { status: 401 }
-      );
-      clearSessionCookie(response);
-      return response;
-    }
-
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    if (!clientId || !clientSecret) {
-      return NextResponse.json(
-        { success: false, error: "Server Google credentials are not configured." },
-        { status: 503 }
-      );
-    }
-
-    try {
-      const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      });
-
-      if (!refreshRes.ok) {
-        const res = NextResponse.json(
-          {
-            success: false,
-            error: "Gmail access has expired. Please reconnect your Google account.",
-          },
-          { status: 401 }
-        );
-        clearSessionCookie(res);
-        return res;
-      }
-
-      const tokenData = (await refreshRes.json()) as GoogleRefreshResponse;
-      if (!tokenData.access_token) {
-        return NextResponse.json(
-          { success: false, error: "Google did not return an access token." },
-          { status: 502 }
-        );
-      }
-
-      accessToken = tokenData.access_token;
-      sessionToPersist = {
-        ...session,
-        googleAccessToken: accessToken,
-        tokenExpiry: Date.now() + (tokenData.expires_in ?? 3600) * 1000,
-      };
-    } catch {
-      return NextResponse.json(
-        { success: false, error: "Could not reach Google to refresh authorization." },
-        { status: 502 }
-      );
-    }
+    const response = NextResponse.json(
+      {
+        success: false,
+        error: "Gmail access expired. Reconnect your Google account to start a new scan.",
+      },
+      { status: 401, headers: { "Cache-Control": "no-store" } }
+    );
+    clearSessionCookie(response);
+    return response;
   }
 
   // Execute live multi-lane search
   try {
-    const supabase = createSupabaseServerClient();
     const { data: quotaRows, error: quotaError } = await supabase.rpc(
       "consume_gmail_scan_quota"
     );
@@ -331,12 +367,43 @@ export async function POST(request: Request) {
 
     const { candidates, totalMessagesScanned, lanesScanned, warnings } =
       await searchGmailMultiLane(accessToken, scanOptions);
+    const safeCandidates = candidates.map((candidate) => ({
+      ...candidate,
+      billing_channel: candidate.billing_channel.replace(
+        /\s*\(Card\s+••••\s*\d{4}\)/gi,
+        ""
+      ),
+      mandate_details: candidate.mandate_details
+        ? {
+            max_amount_rupees: candidate.mandate_details.max_amount_rupees,
+            start_date: candidate.mandate_details.start_date,
+            end_date: candidate.mandate_details.end_date,
+            frequency: candidate.mandate_details.frequency,
+          }
+        : undefined,
+      evidence: candidate.evidence.map((evidence, index) => ({
+        id: `${evidence.evidence_type}-${index + 1}`,
+        source: "gmail" as const,
+        evidence_type: evidence.evidence_type,
+        date: evidence.date,
+        amount_rupees: evidence.amount_rupees,
+        currency: evidence.currency,
+        billing_channel: evidence.billing_channel?.replace(
+          /\s*\(Card\s+••••\s*\d{4}\)/gi,
+          ""
+        ),
+        merchant_raw: evidence.merchant_raw,
+        plan_name: evidence.plan_name,
+        frequency_raw: evidence.frequency_raw,
+        summary: evidence.summary,
+      })),
+    }));
 
     const response = NextResponse.json({
       success: true,
       mode: "live",
-      count: candidates.length,
-      candidates,
+      count: safeCandidates.length,
+      candidates: safeCandidates,
       totalMessagesScanned,
       historyRange: scanOptions.historyRange,
       lanesScanned,
@@ -345,8 +412,8 @@ export async function POST(request: Request) {
         candidates.length > 0
           ? `Discovered ${candidates.length} likely subscription candidates from ${totalMessagesScanned} keyword-matched emails in the past ${historyRange === "30d" ? "30" : "45"} days. Review each candidate before saving.`
           : `Checked ${totalMessagesScanned} keyword-matched emails from the past ${historyRange === "30d" ? "30" : "45"} days across ${lanesScanned.length} lanes, but found no recurring subscription receipts.`,
-    });
-    setSessionCookie(response, sessionToPersist);
+    }, { headers: { "Cache-Control": "no-store" } });
+    setSessionCookie(response, session);
     return response;
   } catch (error) {
     if (error instanceof GmailApiError) {
@@ -369,4 +436,21 @@ export async function POST(request: Request) {
       { status: 502 }
     );
   }
+}
+
+function markNoStore(response: NextResponse): NextResponse {
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
+export async function GET() {
+  return markNoStore(await handleGet());
+}
+
+export async function DELETE(request: Request) {
+  return markNoStore(await handleDelete(request));
+}
+
+export async function POST(request: Request) {
+  return markNoStore(await handlePost(request));
 }

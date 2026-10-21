@@ -5,12 +5,27 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  const demoModeEnabled =
+    process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE === "true";
+  const isLoginPage = request.nextUrl.pathname === "/login";
+  const isAuthCallback = request.nextUrl.pathname === "/auth/callback";
+  const isApiRequest = request.nextUrl.pathname.startsWith("/api/");
+
   if (
     !supabaseUrl ||
     !supabaseAnonKey ||
-    supabaseUrl.includes("your-project")
+    supabaseUrl.includes("your-project") ||
+    supabaseAnonKey.includes("your-anon-key")
   ) {
-    return NextResponse.next();
+    if (demoModeEnabled || isLoginPage || isAuthCallback || isApiRequest) {
+      return NextResponse.next();
+    }
+
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/login";
+    loginUrl.search = "";
+    loginUrl.searchParams.set("setup", "required");
+    return NextResponse.redirect(loginUrl);
   }
 
   let response = NextResponse.next({ request });
@@ -38,9 +53,6 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const isLoginPage = request.nextUrl.pathname === "/login";
-  const isAuthCallback = request.nextUrl.pathname === "/auth/callback";
-
   if (!user && !isLoginPage && !isAuthCallback) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";

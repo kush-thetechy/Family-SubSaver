@@ -71,6 +71,7 @@ function ImportContent() {
   const [gmailStatusLoaded, setGmailStatusLoaded] = useState(false);
   const [gmailSetupMessage, setGmailSetupMessage] = useState("");
   const [gmailEmail, setGmailEmail] = useState<string | null>(null);
+  const [gmailConnectionId, setGmailConnectionId] = useState<string | null>(null);
   const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
   const [modalConsent, setModalConsent] = useState(false);
   const [gmailMessage, setGmailMessage] = useState("");
@@ -102,6 +103,7 @@ function ImportContent() {
           configured: boolean;
           connected: boolean;
           email?: string | null;
+          connectionId?: string | null;
           message?: string;
         };
       })
@@ -112,6 +114,7 @@ function ImportContent() {
         setGmailStatusLoaded(true);
         setGmailSetupMessage(status.message ?? "");
         if (status.email) setGmailEmail(status.email);
+        setGmailConnectionId(status.connectionId ?? null);
       })
       .catch(() => {
         // Non-blocking status check
@@ -276,7 +279,19 @@ function ImportContent() {
     }
 
     try {
-      const response = await fetch("/api/connectors/gmail/auth");
+      const consentResponse = await fetch("/api/connectors/gmail/consent", {
+        method: "POST",
+      });
+      const consentData = (await consentResponse.json()) as { error?: string };
+      if (!consentResponse.ok) {
+        throw new Error(
+          consentData.error || "Could not record your Gmail consent."
+        );
+      }
+
+      const response = await fetch("/api/connectors/gmail/auth", {
+        method: "POST",
+      });
       const data = (await response.json()) as {
         configured?: boolean;
         authUrl?: string | null;
@@ -292,8 +307,10 @@ function ImportContent() {
             "Google OAuth is not configured on the server. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env.local."
         );
       }
-    } catch {
-      setErrorMessage("Failed to initiate Google OAuth.");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to initiate Google OAuth."
+      );
     }
   };
 
@@ -365,13 +382,53 @@ function ImportContent() {
       const data = (await response.json()) as {
         connected: boolean;
         error?: string;
+        message?: string;
       };
+      if (!response.ok || !data.connected) {
+        throw new Error(
+          data.error || data.message || "Could not disconnect Gmail."
+        );
+      }
       setGmailConnected(false);
       setGmailEmail(null);
+      setGmailConnectionId(null);
       setGmailCandidates([]);
       setGmailMessage("Gmail disconnected and stored server session deleted.");
     } catch (error) {
-      setErrorMessage("Could not disconnect Gmail.");
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not disconnect Gmail."
+      );
+    }
+  };
+
+  const handleDeleteGmailImports = async () => {
+    if (
+      !window.confirm(
+        "Permanently delete subscriptions previously confirmed and imported from Gmail? Manual and screenshot records will remain."
+      )
+    ) {
+      return;
+    }
+    setErrorMessage("");
+    try {
+      const response = await fetch("/api/connectors/gmail/imports", {
+        method: "DELETE",
+      });
+      const result = (await response.json()) as {
+        deletedCount?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(result.error || "Could not delete Gmail imports.");
+      }
+      setGmailMessage(
+        `${result.deletedCount ?? 0} Gmail-imported subscription record(s) deleted.`
+      );
+      window.location.assign("/import?gmail=imports-deleted");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not delete Gmail imports."
+      );
     }
   };
 
@@ -386,7 +443,7 @@ function ImportContent() {
       renewal_date: cand.renewal_date || "",
       billing_channel: cand.billing_channel,
       confidence: cand.confidence,
-      source_label: cand.billing_channel,
+      source_label: "Gmail",
       is_duplicate: Boolean(cand.is_possible_duplicate),
     });
   };
@@ -433,6 +490,8 @@ function ImportContent() {
           renewal_date: item.renewal_date || undefined,
           visibility: "full_details",
           source: "import",
+          source_type: "screenshot",
+          imported_at: new Date().toISOString(),
           is_active: true,
           notes: `Imported via ${item.source_label}. Verified by ${currentProfile.name}.`,
         });
@@ -486,6 +545,13 @@ function ImportContent() {
         renewal_date: extractedData.renewal_date || undefined,
         visibility: "full_details",
         source: "import",
+        source_type:
+          extractedData.source_label === "Gmail" ? "gmail" : "screenshot",
+        source_connection_id:
+          extractedData.source_label === "Gmail"
+            ? gmailConnectionId ?? undefined
+            : undefined,
+        imported_at: new Date().toISOString(),
         is_active: true,
         notes: `Imported via ${extractedData.source_label}. Verified by ${currentProfile.name}.`,
       });
@@ -659,7 +725,7 @@ function ImportContent() {
                   Gmail Subscription Scan
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  Searches matching Google Play and Apple receipts, direct merchant billing emails, and bank e-mandate notices. Message bodies are fetched only after Gmail search finds the keywords.
+                  A scan you start searches three billing-related lanes, up to 200 unique matches from the selected 30- or 45-day window. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
                 </p>
               </div>
 
@@ -736,6 +802,13 @@ function ImportContent() {
                     Disconnect & Revoke
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={handleDeleteGmailImports}
+                  className="w-full py-1 text-[11px] text-slate-500 hover:text-rose-600 transition"
+                >
+                  Delete saved Gmail-imported records
+                </button>
               </div>
             </div>
 
@@ -1402,16 +1475,16 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Targeted, recent search:</strong> The app requests <code className="text-indigo-600">gmail.readonly</code> and searches only the past 30 or 45 days for subscription, renewal, receipt, payment, merchant, and recurring mandate terms. Message contents are fetched only for search matches.
+                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. Each scan you start searches the last 30 or 45 days across billing-related keywords, skips spam and trash, and processes no more than 200 unique matching messages. A match may contain unrelated text.
                 </li>
                 <li>
-                  <strong>Zero email body retention:</strong> Message bodies are parsed in memory on the server and immediately discarded. No full emails or personal messages are ever stored or logged.
+                  <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; this statement does not mean message data never leaves your device or that Google limits the scope to recent messages.
                 </li>
                 <li>
-                  <strong>No passwords or banking credentials:</strong> Card CVVs, banking passwords, and OTPs are never accessed or stored.
+                  <strong>Manual scans only:</strong> We do not run background scans. The app requests only Gmail read-only scope and does not send, alter, or delete email.
                 </li>
                 <li>
-                  <strong>Human confirmation required:</strong> Discovery findings appear in a review queue. Nothing is added to your household without your explicit confirmation.
+                  <strong>Review and control:</strong> Extracted structured candidates are shown for your review; only confirmed records are saved. Imports are private to your account, and Settings/Import controls separately withdraw consent, disconnect Gmail, and delete Gmail-tagged records.
                 </li>
               </ul>
             </div>
@@ -1425,7 +1498,7 @@ function ImportContent() {
                 className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
               />
               <span>
-                I understand and consent to a read-only search of keyword-matched Gmail messages from the past 30 or 45 days.
+                I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above.
               </span>
             </label>
 
