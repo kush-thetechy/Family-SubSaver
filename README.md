@@ -108,7 +108,7 @@ Primary goals:
 
 ### Add a subscription
 
-1. Open the app and enter demo mode or sign in.
+1. Sign in to your private account. Demo mode is available only when explicitly enabled for local development.
 2. Select **Add subscription**.
 3. Enter service, amount and billing cycle.
 4. Optionally add plan, category, payer, users, billing channel and renewal date.
@@ -141,7 +141,7 @@ The user should be able to select screenshots from their device; the tool should
 
 ### Find subscriptions in email
 
-Recommend connecting Gmail as the easiest way to find subscriptions billed through app stores, merchants, or recurring card/bank mandates. The user starts each scan and grants read-only access. Search only the previous **30 or 45 days**, and fetch message contents only for Gmail search results that match the subscription and billing keywords below. Parse in memory, then discard message bodies. For users who do not want to connect Gmail, offer screenshots of the active Google Play and Apple subscription lists instead; these cover store-managed subscriptions, while direct-billed services may need Gmail or manual entry.
+Gmail discovery is an optional, separate user action. The `gmail.readonly` scope grants broader Gmail read access than the app's filters; it does not limit Google access to recent or keyword-matched messages. The server searches three billing-related lanes within the selected **30- or 45-day** window and fetches only message IDs returned by those searches, up to **200 unique messages per scan**. Matched message content is processed on the server and is not intentionally persisted as a raw body. For users who do not connect Gmail, screenshots of active Google Play and Apple subscription lists plus manual entry remain available.
 
 * **Google Play:** messages commonly have a subject like “Your Google Play Order Receipt” and include the app or plan, order date, recurring price and period (for example, `₹330.00/month`), Google account, and payment method. A renewal email is evidence of a charge or renewal, not a complete live list of active subscriptions.
 * **Apple:** search for “receipt from Apple” or “invoice from Apple.” A receipt can show the purchased item, amount, date and Apple Account; it may group multiple items. Apple lets users enable **Renewal Receipt Emails** in the subscription settings. A receipt proves a purchase/charge, but may not establish current renewal status or the next renewal date.
@@ -255,7 +255,7 @@ Before real household data is accepted:
 * Validate inputs server-side.
 * Keep privileged keys server-only.
 * Avoid logging receipt contents or sensitive notes.
-* Load Microsoft Clarity only after explicit analytics consent. Mask application page content and allow users to revoke consent in Settings.
+* Keep Microsoft Clarity and session replay disabled on authenticated, spending, import, review, Gmail, and OAuth routes. The current private-account app does not load Clarity.
 * Implement and document retention/deletion.
 * Provide a privacy notice, terms, support contact and incident-handling process.
 * Use synthetic data until access-control and deletion tests pass.
@@ -321,29 +321,37 @@ Use the repository's actual package manager if it uses pnpm or yarn.
 
 Create `.env.local` using `.env.example` if available. Never commit `.env.local` or real keys.
 
-Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from your Supabase project's API settings. In Supabase Authentication, configure the site URL and add `http://localhost:3000/auth/callback` as a redirect URL. Apply all SQL migrations in `supabase/migrations/` in filename order before creating accounts. They create private personal households and subscription tables with Row Level Security, plus the Gmail scan quota; family invitations are not enabled yet. Without Supabase configuration, the app remains in demo mode.
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from your Supabase project's API settings. Apply all SQL migrations in `supabase/migrations/` in filename order before creating accounts. They create private personal households and subscription tables with Row Level Security, plus the Gmail scan quota; family invitations are not enabled yet. The app requires sign-in by default and never falls back to demo mode unless `NEXT_PUBLIC_ENABLE_DEMO_MODE=true` is explicitly set.
 
-Users can create an account or sign in at `/login`. If email confirmation is enabled in Supabase, they must confirm using the link before signing in. Authenticated accounts store subscriptions in Supabase; demo records remain browser-local and are not copied into accounts.
+For a private Gmail pilot, leave `NEXT_PUBLIC_ALLOW_SIGN_UP=false` and `NEXT_PUBLIC_ENABLE_DEMO_MODE=false`. Create one test user in Supabase Authentication after applying the migrations, then sign in at `/login`. The pilot account stores subscriptions in Supabase. Enable `NEXT_PUBLIC_ALLOW_SIGN_UP=true` only when ready to accept public registrations.
 
 ### Connect Gmail for subscription discovery
 
-Gmail discovery is optional, read-only, and explicitly user-triggered. A live scan searches only keyword-matched emails from the previous 30 or 45 days. Use **Preview sample results** on the Import page to explore the review flow without accessing an inbox.
+Gmail discovery is optional and explicitly user-triggered. Google grants the restricted `gmail.readonly` scope; the app's last-30/45-day, billing-keyword, spam/trash, and 200-message limits are application-side filters, not Google-enforced scope boundaries. The server enforces a maximum of five scans per authenticated app account per UTC day. Use **Preview sample results** to explore the review flow without accessing an inbox. Gmail is disabled unless the server release gate is configured for an allowlisted test account.
 
 #### Live Google Cloud configuration
 
-1. In Google Cloud Console, create a project, enable the **Gmail API**, and configure the **OAuth consent screen**. For testing, add your Google account under **Test users**.
-2. Create an **OAuth client ID** for a **Web application**. Add `http://localhost:3000/api/connectors/gmail/callback` as an authorized redirect URI.
-3. In `.env.local`, configure the server-side environment variables:
+1. Configure the private Supabase pilot above and create a test account for yourself. Sign-ups can stay disabled.
+2. In Google Cloud Console, create a project, enable the **Gmail API**, and configure the **OAuth consent screen**. Keep the app in Testing mode and add your own Google account under **Test users**.
+3. Create an **OAuth client ID** for a **Web application**. Add the exact app origin plus `/api/connectors/gmail/callback` as an authorized redirect URI (for example, `http://localhost:3000/api/connectors/gmail/callback` or your Vercel site callback URL).
+4. Configure these variables for the environment you will test (in `.env.local` for local testing or Vercel Environment Variables for a private deployed pilot):
    ```env
+   NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+   NEXT_PUBLIC_ALLOW_SIGN_UP=false
+   NEXT_PUBLIC_ENABLE_DEMO_MODE=false
+   GMAIL_MODE=test
+   GMAIL_TESTER_USER_IDS=your-supabase-auth-user-uuid
    GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
    GOOGLE_CLIENT_SECRET=your-google-client-secret
    FSS_GMAIL_SESSION_SECRET=64-hex-characters-from-a-cryptographically-random-32-byte-key
-   NEXT_PUBLIC_APP_URL=http://localhost:3000
+   NEXT_PUBLIC_APP_URL=https://your-test-site.example
    ```
-   Generate the local session secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Configure a different secret in Vercel for production; Gmail sessions are encrypted into an `HttpOnly` cookie so they survive serverless requests without an in-memory session map.
-4. Restart the development server (`npm run dev`).
+   Set `NEXT_PUBLIC_APP_URL` to the exact origin used for the test. `GMAIL_TESTER_USER_IDS` must contain the Supabase Auth UUID for each approved tester, not an email address. Generate the session secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Set the matching Supabase Auth site URL and add its `/auth/callback` URL (for example, `https://your-test-site.example/auth/callback`) to the Supabase redirect allow list. Apply the latest SQL migration before recording Gmail consent. Vercel environment changes require a new deployment.
 5. Open the **Import** page, click **Connect Gmail**, review the data disclosure and consent terms, and approve read-only Google access.
 6. Select **Past 30 days** or **Past 45 days**, then click **Scan Gmail Inbox**. Each account can run at most five live scans per UTC calendar day; the quota is shared across devices and enforced server-side. The server also enforces the date range even if a request submits a longer range.
+
+If the Import page reports setup required, check the Vercel deployment's environment values for Supabase, Google OAuth, and `FSS_GMAIL_SESSION_SECRET`, confirm both migrations are applied, and redeploy. Do not enable public sign-ups to test your own Gmail.
 
 #### Discovery architecture & evidence lanes
 
@@ -355,20 +363,21 @@ The discovery engine searches recent keyword matches through three evidence lane
 * **Cross-Source Consolidation:** Multiple receipts across months, store order receipts, and bank debit alerts are consolidated into a single candidate with attached source evidence history, rather than creating separate duplicate subscriptions.
 * **Conservative Status & Unknown Intervals:** Mandates and receipts are not presumed to be active consumer subscriptions; status is labelled (`Likely Active`, `Needs Confirmation`, `Cancelled / Expired`, `Payment Failed`). Missing billing cycles are marked `unknown` for review rather than defaulting to monthly.
 
-#### Privacy, security & zero-retention policy
+#### Gmail data handling and release gates
 
 * **Server-only OAuth credentials:** Client ID and Client Secret must be configured on the server. The client browser never receives or submits client secrets.
-* **Encrypted Gmail session:** Google tokens are sealed with AES-256-GCM in a `Secure`/`HttpOnly` cookie and are never available to browser JavaScript. The encryption key is server-only (`FSS_GMAIL_SESSION_SECRET`); production must configure a stable random 32-byte key so sessions work across Vercel serverless requests.
-* **Zero email body retention:** Email bodies are parsed in server memory and immediately discarded. No raw email bodies or personal correspondence are stored or logged.
-* **Sensitive financial data protection:** The app never requests or stores full card numbers, CVVs, banking passwords, or OTPs. Card numbers are masked to the last 4 digits (`•••• 4412`) for review identification only.
-* **Revocation on disconnect:** Choosing **Disconnect & Revoke** calls Google's token revocation API (`https://oauth2.googleapis.com/revoke`) and clears the encrypted session cookie.
+* **Separate opt-in:** Account sign-in does not request Gmail access. The user reviews a separate disclosure and records versioned consent before OAuth or a live scan.
+* **Server-side release gate:** `GMAIL_MODE=disabled` (the default) blocks Gmail. `GMAIL_MODE=test` requires the authenticated user's UUID in `GMAIL_TESTER_USER_IDS`. Public mode requires `GMAIL_MODE=public` plus owner-controlled approval, Google verification, security assessment, and privacy review flags. These flags are deployment controls, not evidence that any external approval has been granted.
+* **OAuth protections:** The flow uses one-time random state, PKCE S256, the signed-in account binding, the exact read-only Gmail scope, and a short-lived encrypted HttpOnly session cookie. It does not request offline access; expired tokens require a new user-initiated connection.
+* **Bounded processing:** Each Gmail API response is capped at 2 MiB; MIME traversal is limited by part count, nesting, and extracted text size; attachment content is skipped; search results exclude spam/trash and are checked against the selected date window before parsing.
+* **No intentional raw-body persistence:** Matched content is processed on the server and is not intentionally written as a raw email body to the database. This is not a claim that data never leaves the device, that transient memory is securely erased, or that a matched email cannot contain unrelated text. Review/scan responses are marked `no-store`; candidates are stripped of full headers, subject, message ID, order ID, mandate ID, and card suffix before browser display.
+* **Review and provenance:** Candidates remain in the page's in-memory review state until the user confirms a record. Confirmed imports are tagged as Gmail-originated and can be deleted separately; source metadata and confirmation do not remove any third-party policy obligations.
+* **Disconnect and deletion:** **Disconnect & Revoke**, **Withdraw Gmail consent**, **Delete saved Gmail-imported records**, and **Delete account and data** are separate actions. Revocation failure is surfaced. Account deletion requires a recent password sign-in. Backup retention and deletion propagation remain provider-dependent and must be documented before public launch.
+* **No Clarity on private pages:** Microsoft Clarity is not mounted in the app layout while authenticated routes contain spending or import data. Do not re-enable session replay/analytics on these routes without a separate data-flow review.
 
-#### Production OAuth verification requirements
+#### Public Gmail launch blockers
 
-Google classifies `https://www.googleapis.com/auth/gmail.readonly` as a **Restricted Scope**. For local testing and internal development, the app functions in Testing mode with configured test users. For a public production deployment, Google requires:
-1. Google OAuth App Verification.
-2. A publicly accessible Privacy Policy disclosing restricted scope usage.
-3. Annual Cloud Application Security Assessment (CASA / Tier 2) verification under Google's API Services User Data Policy.
+Google classifies `https://www.googleapis.com/auth/gmail.readonly` as a **Restricted Scope**. A test allowlist or successful local scan does not establish a public-use exception or authorize a consumer launch. Before enabling public Gmail, document the app's actual permitted-use rationale, complete the verification and security-assessment steps Google assigns (do not assume a particular tier), publish accurate privacy disclosures, complete legal/security reviews, and obtain explicit owner sign-off. These items are tracked in `docs/gmail-guardrails.md`. Until then, keep Gmail disabled or restricted to genuinely authorized testing; manual entry and local screenshot OCR remain independent features.
 
 #### Discovery limitations
 
@@ -399,13 +408,22 @@ Names depend on the implementation. Likely variables include:
 
 |Variable|Purpose|
 |-|-|
-|`NEXT\_PUBLIC\_SUPABASE\_URL`|Required for account sign-in and private subscription storage|
-|`NEXT\_PUBLIC\_SUPABASE\_ANON\_KEY`|Required public client key; database access is protected by RLS|
-|`GOOGLE\_CLIENT\_ID`|Optional Google OAuth web client ID for live Gmail scanning|
-|`GOOGLE\_CLIENT\_SECRET`|Optional server-side Google OAuth client secret|
-|`NEXT\_PUBLIC\_APP\_URL`|Public app URL for callbacks/links|
+|`NEXT_PUBLIC_SUPABASE_URL`|Required for account sign-in and private subscription storage|
+|`NEXT_PUBLIC_SUPABASE_ANON_KEY`|Required public client key; database access is protected by RLS|
+|`NEXT_PUBLIC_ALLOW_SIGN_UP`|Keep `false` for the private pilot; set `true` only when opening registration|
+|`NEXT_PUBLIC_ENABLE_DEMO_MODE`|Explicitly opt in to local demo mode; leave `false` for sign-in-first behavior|
+|`GOOGLE_CLIENT_ID`|Google OAuth web client ID for live Gmail scanning|
+|`GOOGLE_CLIENT_SECRET`|Server-side Google OAuth client secret|
+|`FSS_GMAIL_SESSION_SECRET`|Server-side 32-byte hex key for encrypted Gmail session cookies|
+|`GMAIL_MODE`|Server-only `disabled` (default), `test`, or owner-gated `public` Gmail access|
+|`GMAIL_TESTER_USER_IDS`|Comma-separated Supabase Auth UUID allowlist required in test mode|
+|`GMAIL_PUBLIC_LAUNCH_APPROVED`|Owner approval gate; not proof of external compliance|
+|`GMAIL_GOOGLE_VERIFICATION_CONFIRMED`|Owner records completed Google verification evidence|
+|`GMAIL_SECURITY_ASSESSMENT_CONFIRMED`|Owner records completed assigned security-assessment evidence|
+|`GMAIL_PRIVACY_REVIEW_CONFIRMED`|Owner records reviewed disclosures and data flows|
+|`NEXT_PUBLIC_APP_URL`|Exact public app origin used to construct OAuth callback URLs|
 
-Use placeholders only in `.env.example`. If an optional integration is not configured, show a clear fallback. Demo mode must be labelled.
+Use placeholders only in `.env.example`. Do not expose demo data by default; use the sign-in setup screen when Supabase is missing. Demo mode must be explicitly enabled and labelled.
 
 ## Database and demo data
 
@@ -413,7 +431,7 @@ Apply SQL migrations in `supabase/migrations/` to the Supabase project before us
 
 Demo data should include three adult demo members and examples across OTT, music, AI productivity, cloud storage and telecom. Include duplicate records, an annual subscription, an unknown sharing rule, a stale catalog item and a hidden subscription. Use fictional or clearly demo-labelled prices unless official current prices are verified.
 
-Demo mode must be labelled and must not imply changes persist to real accounts. Demo data is browser-local and is not loaded into authenticated accounts. New authenticated users start with an empty private household. Family invitations and shared household access are not implemented yet.
+Demo mode is disabled by default and must never imply changes persist to real accounts. Demo data is browser-local and is not loaded into authenticated accounts. New authenticated users start with an empty private household. Family invitations and shared household access are not implemented yet.
 
 ## Testing
 
@@ -501,32 +519,30 @@ The app may not contain every household subscription. Show audit progress and do
 
 ## Roadmap
 
-### Sprint 1 — Core MVP (2–3 days)
+### Sprint 1 — Private owner pilot
 
-* Email/password account creation and sign-in with protected application routes.
-* Private per-account household and subscription CRUD with RLS.
-* Dashboard and calculations.
-* Duplicate review.
-* Small sourced catalog.
-* Import review flow or explicit manual fallback.
-* Gmail OAuth associated with the signed-in account.
-* Core access tests and deployable build.
+* Keep demo mode disabled; verify email/password sign-in, protected routes, private household creation and subscription CRUD with RLS.
+* Validate dashboard calculations, duplicate review, manual entry and browser-side screenshot OCR using synthetic data.
+* Apply and verify all database migrations, including Gmail consent, provenance and account deletion, in the private Supabase project.
+* Keep Gmail disabled until Google OAuth branding/credentials and the private tester allowlist are intentionally configured. Do not treat a local build or allowlist as Google approval.
+* Verify account deletion, Gmail disconnection/revocation and Gmail-import deletion; document provider backup and log-retention behavior.
 
-### Sprint 2 — Controlled beta
+### Sprint 2 — Authorized Gmail pilot
 
-* Complete family invitations and member lifecycle.
-* Add cross-household and privacy-redaction RLS tests before enabling sharing.
-* Finish account deletion and privacy notices.
-* Improve import handling.
-* Test with consenting adult households.
+* Run end-to-end Gmail scans only with the account owner's informed consent and an authorized Google test account; use synthetic fixtures for parser and bounds testing.
+* Confirm the actual OAuth scope, query relevance, response sanitization, five-scan quota, logs/traces/cache behavior, revoke behavior and deletion behavior.
+* Complete Google permitted-use, verification and assigned security-assessment steps before any wider availability.
+* Complete privacy/security/legal review and incident-response preparation; keep family invitations disabled until cross-household RLS and redaction tests pass.
 
-### Sprint 3 — Product validation
+### Sprint 3 — Product validation and paid launch
 
 * Measure audit completion time.
 * Measure import success and recommendation usefulness.
 * Test willingness to pay.
-* Refine free/premium packaging.
+* Decide pricing and free/premium limits before implementing payment processing.
+* If approved, add a payment provider with verified, idempotent webhooks, server-enforced entitlements, refunds, failed-payment handling and cancellation UX; never paywall access control or deletion.
 * Expand catalog only when current sources are available.
+* Add Clarity only to explicitly approved public surfaces with consent; exclude authenticated, spending, import, review, Gmail and OAuth routes and re-verify deployed network behavior.
 
 Later integrations require a separate feasibility, privacy and platform review.
 
@@ -597,18 +613,20 @@ This README is not legal advice. Before a public launch with real household data
 
 ## Definition of done
 
-The MVP is ready for a controlled demonstration when:
+The private pilot is ready for an owner-controlled test when:
 
-* A tester can enter demo mode or sign in.
-* A household can be created/joined through the implemented flow.
+* The owner can sign in to a private account; demo mode is disabled in the test deployment.
+* A new account receives a private household through the implemented flow.
 * Subscriptions can be added, edited and deleted.
 * Normalized and annualized figures are correct.
 * Dashboard totals update correctly.
 * Duplicate alerts make no unsupported sharing claims.
-* Import is configured or clearly falls back to manual entry.
+* Manual entry and screenshot OCR work independently of Gmail.
 * Unconfirmed extraction is never saved.
 * Real-account privacy controls are enforced server-side.
-* Deletion behavior is implemented and documented.
+* Deletion behavior is implemented, migrated, tested and documented.
+* Gmail remains disabled unless the owner has intentionally configured an allowlisted test account, Google OAuth, the consent migration and a valid private test setup.
+* Public Gmail, payment processing and analytics on private routes remain disabled until their separate release requirements are met.
 * The app is responsive and deployable.
 * Quality checks are run and results recorded.
 * Setup, migrations, environment variables, deployment and limitations are documented.

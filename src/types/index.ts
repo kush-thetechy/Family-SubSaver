@@ -64,6 +64,9 @@ export interface Subscription {
   is_active: boolean;
   visibility: VisibilityLevel;
   source: "manual" | "import" | "demo";
+  source_type?: "manual" | "screenshot" | "gmail";
+  source_connection_id?: string;
+  imported_at?: string;
   notes?: string;
   created_at: string;
   updated_at: string;
@@ -192,4 +195,3 @@ export interface ConsolidatedSubscriptionCandidate {
     reason: string;
   }[];
 }
-

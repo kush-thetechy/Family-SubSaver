@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useApp } from "@/context/AppContext";
+import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   Download,
   Trash2,
@@ -28,6 +30,10 @@ export default function SettingsPage() {
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const router = useRouter();
 
   const handleExport = () => {
     const dataStr = exportDataJson();
@@ -48,6 +54,7 @@ export default function SettingsPage() {
 
   const handleDeleteAll = async () => {
     setActionError("");
+    setActionMessage("");
     if (
       confirm(
         `WARNING: This will permanently delete ${
@@ -67,10 +74,82 @@ export default function SettingsPage() {
     }
   };
 
-  const setAnalyticsConsent = (allowed: boolean) => {
-    window.dispatchEvent(
-      new CustomEvent("fss-clarity-consent-change", { detail: allowed })
-    );
+  const handleWithdrawGmailConsent = async () => {
+    setActionError("");
+    setActionMessage("");
+    try {
+      const response = await fetch("/api/connectors/gmail/consent", {
+        method: "DELETE",
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error || "Could not withdraw Gmail consent.");
+      }
+      setActionMessage(
+        "Gmail consent was withdrawn. The app will not start new Gmail scans until you consent again."
+      );
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Could not withdraw Gmail consent."
+      );
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setActionError("");
+    setActionMessage("");
+    if (!currentProfile.email || !accountPassword) {
+      setActionError("Enter your account password to confirm account deletion.");
+      return;
+    }
+    if (
+      !window.confirm(
+        "Permanently delete your account, personal household, subscriptions, and Gmail consent records? This cannot be undone."
+      )
+    ) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setActionError("Account deletion is unavailable because sign-in is not configured.");
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    try {
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email: currentProfile.email,
+        password: accountPassword,
+      });
+      if (reauthError) throw new Error("Password confirmation failed.");
+
+      const response = await fetch("/api/account", { method: "DELETE" });
+      const result = (await response.json()) as {
+        success?: boolean;
+        googleRevocationFailed?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Could not delete your account.");
+      }
+
+      await supabase.auth.signOut({ scope: "local" });
+      router.replace(
+        result.googleRevocationFailed
+          ? "/login?account=deleted&warning=google-revoke"
+          : "/login?account=deleted"
+      );
+      router.refresh();
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Could not delete your account."
+      );
+    } finally {
+      setIsDeletingAccount(false);
+    }
   };
 
   return (
@@ -90,7 +169,11 @@ export default function SettingsPage() {
           {actionError}
         </p>
       )}
-
+      {actionMessage && (
+        <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+          {actionMessage}
+        </p>
+      )}
       {/* Persistence / Mode Status */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
         <div className="flex items-center gap-2">
@@ -133,37 +216,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center gap-2">
-          <Shield className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-          <h2 className="text-base font-bold text-slate-900 dark:text-white">
-            Analytics Privacy
-          </h2>
-        </div>
-        <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-          Microsoft Clarity is loaded only if you allow usage and interaction
-          analytics. Application text is masked, and your choice is stored in
-          this browser.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setAnalyticsConsent(true)}
-            className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700"
-          >
-            Allow analytics
-          </button>
-          <button
-            type="button"
-            onClick={() => setAnalyticsConsent(false)}
-            className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-          >
-            Reject or revoke analytics
-          </button>
-        </div>
-      </div>
-
-      {/* Data Portability & GDPR / DPDP Compliance */}
+      {/* Data Portability & Deletion */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
         <div className="flex items-center gap-2">
           <Lock className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -172,7 +225,7 @@ export default function SettingsPage() {
           </h2>
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-          In compliance with the Indian Digital Personal Data Protection (DPDP) Act and standard data privacy principles, you have complete ownership of your household data.
+          Export or delete subscription records below. Gmail consent, Gmail connection, Gmail-imported records, and account deletion are separate controls. Provider backup-retention schedules are not controlled by this app.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
@@ -186,6 +239,42 @@ export default function SettingsPage() {
                 Download all subscriptions, members, and audit metadata as a structured JSON backup.
               </p>
             </div>
+
+            {!isDemoMode && (
+              <div className="rounded-xl border border-rose-300 bg-rose-50 p-4 dark:border-rose-900 dark:bg-rose-950/30">
+                <h3 className="font-bold text-sm text-rose-900 dark:text-rose-200">
+                  Permanently delete account
+                </h3>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                  This deletes your Supabase account, household records, subscription data, and Gmail consent history. Disconnect/revocation is attempted first; Google may still require you to remove access in your Google Account if revocation fails.
+                </p>
+                <label className="mt-3 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Confirm with your account password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={accountPassword}
+                    onChange={(event) => setAccountPassword(event.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  disabled={isDeletingAccount}
+                  className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white hover:bg-rose-800 disabled:opacity-60"
+                >
+                  {isDeletingAccount ? "Deleting account..." : "Delete account and data"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWithdrawGmailConsent}
+                  className="ml-2 mt-3 rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Withdraw Gmail consent
+                </button>
+              </div>
+            )}
             <div className="pt-4">
               <button
                 onClick={handleExport}

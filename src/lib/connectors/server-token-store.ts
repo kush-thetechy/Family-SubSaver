@@ -19,7 +19,7 @@ export interface ServerUserSession {
 }
 
 export const SESSION_COOKIE_NAME = "fss_session";
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const SESSION_MAX_AGE_SECONDS = 60 * 60;
 const AES_GCM_IV_BYTES = 12;
 
 function getSessionEncryptionKey(): Buffer {
@@ -125,12 +125,15 @@ export function setSessionCookie(
   response: NextResponse,
   session: ServerUserSession
 ): void {
+  const remainingLifetime = session.tokenExpiry
+    ? Math.floor((session.tokenExpiry - Date.now()) / 1000)
+    : SESSION_MAX_AGE_SECONDS;
   response.cookies.set(SESSION_COOKIE_NAME, encryptSession(session), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: Math.max(1, Math.min(SESSION_MAX_AGE_SECONDS, remainingLifetime)),
   });
 }
 

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase";
 
+const allowSignUp = process.env.NEXT_PUBLIC_ALLOW_SIGN_UP === "true";
+
 export default function LoginPage({
   searchParams,
 }: {
@@ -18,6 +20,7 @@ export default function LoginPage({
   const [error, setError] = useState(
     typeof searchParams?.error === "string" ? searchParams.error : ""
   );
+  const setupRequired = searchParams?.setup === "required";
   const [warning, setWarning] = useState(
     typeof searchParams?.warning === "string" ? searchParams.warning : ""
   );
@@ -35,6 +38,10 @@ export default function LoginPage({
       setError("Account sign-in is not configured. Add the Supabase URL and anon key to .env.local.");
       return;
     }
+    if (mode === "sign_up" && !allowSignUp) {
+      setError("New account registration is currently disabled.");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -50,7 +57,9 @@ export default function LoginPage({
 
         if (signUpError) throw signUpError;
         if (!data.session) {
-          setMessage("Check your email to confirm your account, then sign in.");
+          setMessage(
+            "Your account was created. Check your email to confirm it, then return here to sign in."
+          );
           return;
         }
       } else {
@@ -61,7 +70,9 @@ export default function LoginPage({
         if (signInError) throw signInError;
       }
 
-      router.replace("/");
+      router.replace(
+        mode === "sign_up" ? "/?auth=account_created" : "/?auth=signed_in"
+      );
       router.refresh();
     } catch (submissionError) {
       setError(
@@ -89,11 +100,21 @@ export default function LoginPage({
 
         {!isSupabaseConfigured && (
           <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-            Supabase is not configured yet. Add
+            {setupRequired
+              ? "Sign-in is required, but account storage is not configured yet. Add"
+              : "Account sign-in is not configured. Add"}
             {" "}
             <code>NEXT_PUBLIC_SUPABASE_URL</code> and
             {" "}
             <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to enable accounts.
+            {" "}
+            Then apply the Supabase migrations before signing in.
+          </div>
+        )}
+        {isSupabaseConfigured && !allowSignUp && (
+          <div className="mt-5 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200">
+            Private testing is enabled. Sign in with the test account created in
+            Supabase; public account registration is turned off.
           </div>
         )}
 
@@ -162,20 +183,22 @@ export default function LoginPage({
           </button>
         </form>
 
-        <p className="mt-5 text-center text-sm text-slate-600 dark:text-slate-400">
-          {mode === "sign_in" ? "New here?" : "Already have an account?"}{" "}
-          <button
-            type="button"
-            onClick={() => {
-              setMode(mode === "sign_in" ? "sign_up" : "sign_in");
-              setError("");
-              setMessage("");
-            }}
-            className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
-          >
-            {mode === "sign_in" ? "Create an account" : "Sign in"}
-          </button>
-        </p>
+        {allowSignUp && (
+          <p className="mt-5 text-center text-sm text-slate-600 dark:text-slate-400">
+            {mode === "sign_in" ? "New here?" : "Already have an account?"}{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setMode(mode === "sign_in" ? "sign_up" : "sign_in");
+                setError("");
+                setMessage("");
+              }}
+              className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              {mode === "sign_in" ? "Create an account" : "Sign in"}
+            </button>
+          </p>
+        )}
       </div>
     </div>
   );

@@ -83,7 +83,9 @@ const EMPTY_HOUSEHOLD: Household = {
 };
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const isDemoMode = !isSupabaseConfigured;
+  const isDemoMode =
+    !isSupabaseConfigured &&
+    process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE === "true";
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [accountError, setAccountError] = useState("");
   const [allProfiles, setAllProfiles] = useState<Profile[]>(
@@ -129,7 +131,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const supabase = getSupabaseBrowserClient();
     if (!supabase) {
-      setAccountError("Supabase is configured incompletely. Check the public URL and anon key.");
       setIsLoaded(true);
       return;
     }
