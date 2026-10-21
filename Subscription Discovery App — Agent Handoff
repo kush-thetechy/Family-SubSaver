@@ -1,0 +1,270 @@
+Objective
+Build an ongoing subscription and recurring-payment discovery app for individuals and invited family/friends. Present a consolidated single-page inventory, spending, renewal dates, ownership and evidence.
+
+This handoff consolidates a real discovery exercise. It is NOT a completed financial audit. Treat historical findings as candidates and verify them against original records before importing as confirmed current subscriptions.
+
+User context and requirements
+India-first; INR default. Preserve original currencies.
+
+Discover direct merchant subscriptions, UPI Autopay, recurring card payments, Google Play, Apple billing, memberships, trials and annual plans.
+
+Support invited family/friends; distinguish account owner, payer and beneficiaries.
+
+Monitor changes continuously rather than running a one-off keyword scan.
+
+Show evidence, freshness, unresolved fields and audit coverage.
+
+Never infer absence from a limited search result.
+
+Observed discovery failures
+Initial browser summary was mistaken for meaningful mailbox coverage.
+
+Generic subscription/mandate searches missed Perplexity Education entirely.
+
+Perplexity was found through a merchant-name search: Education welcome, Pro activation and a matching ordinary UPI debit on 6 October 2026.
+
+A later membership search surfaced Zomato Gold.
+
+Batched broad searches returned noisy, limited results. Single-query pagination existed but was not systematically exhausted.
+
+Statement attachments were not comprehensively parsed; a full 13-month reconciliation was not completed.
+
+Earlier summaries had inconsistent counts. Use explicit inclusion rules and generated counts.
+
+Consolidated candidate inventory
+Status is based on email evidence retrieved in the conversation, not live merchant verification. Dates below are in 2026 unless stated otherwise. Unknown is not zero.
+
+Service / plan	Amount found	Route	Evidence / working status	Unresolved
+Todoist Pro	INR 330/month	Google Play > GPay UPI	Renewed 10 October; likely active	Live renewal setting
+Truecaller Premium	INR 99/month	Google Play > Mastercard ending 8533	Renewed 3 October; matching HDFC debit	Live renewal setting
+Proton VPN Plus	INR 599/month	Google Play > GPay UPI	Monthly receipts through 22 September; likely active	October renewal
+Speechify Premium	INR 1,149/quarter	Google Play > GPay UPI	Purchased 20 September; renewal stated 20 December	Later cancellation check
+YouTube Premium	INR 195/month	Apple > UPI	September receipt; next renewal stated 28 October	Live renewal setting
+Perplexity Education / Pro	INR 1,183.12 payment	Direct > Cashfree > HDFC UPI	Education welcome, Pro activation and debit 6 October	Billing interval, next renewal, invoice breakdown
+Google AI Pro	Unknown	Unknown	Subscriber-specific messages; 5 TB included	Paid/promotion entitlement, price, renewal
+Claude Pro	INR 1,999/month historically	Google Play > GPay UPI	Cancellation effective 4 October	Later reactivation / alternate route
+NBA League Pass Premium	INR 329/month historically	Google Play	Latest cancellation effective 22 June; earlier subscription cancelled July 2025	Later reactivation
+Brilliant Premium	INR 1,199/month historically	Google Play > GPay UPI	Cancellation effective 14 June	Later reactivation
+V2T / Whisper AI Transcription	INR 260/month historically	Apple > UPI	Expiry notice for 28 April; likely expired	Later reactivation
+Loom Business + AI	USD 24/month estimated excluding tax	Atlassian direct	Payment details absent; moved to Starter 20 September	Current account state
+Lovable	INR 490 initial transaction in monthly mandate registration	HDFC card ending 8533	Mandate cancelled 16 October	Merchant subscription/access; do not assume INR 490 recurring price
+Wispr Flow Pro	Unknown	Direct / HDFC card mandate	Renewal reminder; mandate cancelled 16 October	Merchant subscription/access
+OpenAI, exact product unknown	Unknown	Two HDFC card mandates	Both found mandates cancelled 24 April	Other products/routes and access
+ExpressVPN	Unknown	Unknown	Historical former-customer/restart messages	Likely lapsed, not verified
+Apple One Individual	INR 195/month historically	Apple > UPI	April invoice	Current renewal/access
+iCloud+	INR 75/month and older INR 219/month invoices	Apple; historical store credit	Historical paid plans; current storage warnings	Current paid entitlement
+Zomato Gold	Unknown, three-month term	Unknown; invoice attachments	Renewals December 2025 and April 2026	Current status, cost, payment route
+PlayStation Network	INR 499 declined recurring attempt, October 2025	HDFC debit card	Failed-payment-only candidate	Exact plan, successful payment, current access
+Count: 20 named candidates under these rules, including failed-payment-only PlayStation and historical/lapsed services. This is NOT an active-subscription count.
+
+Other payment groups
+Amazon Seller Services PL: two mandates cancelled 24 April; underlying products unknown. Do not label Prime or assume two subscriptions.
+
+NOV Digital Entertainment Private Limited: INR 499 PhonePe payment March 2025; subscription nature and product mapping unverified.
+
+Apple Media Services: unmatched historical INR 79, 89, 195, 319 and 365 UPI payments. Match to invoices before counting.
+
+Jio mobile: INR 411.82 observed monthly through UPI Autopay; recurring telecom bill, separate category.
+
+HDFC card bill Autopay: INR 16,603 example repayment; exclude from subscription spending to prevent double counting.
+
+Partial spending subtotal
+Previously identified five likely-active priced services: 330 + 99 + 599 + 195 + (1,149 / 3) = INR 1,606/month equivalent.
+Including Jio: INR 2,017.82/month equivalent.
+Exclude Perplexity from monthly normalization until its interval is verified. Exclude Google AI Pro and unresolved items from the numeric subtotal, but explicitly display missing-cost coverage. These subtotals are not total household spending or a guaranteed lower bound on live recurring commitments.
+
+Actual search queries used
+These are observed queries, not an exhaustive production search strategy. The connector required simple Gmail-style queries without OR/AND and supported one-query cursor pagination.
+
+Generic discovery
+text
+"autopay"
+"mandate"
+"recurring"
+"subscription"
+"standing instruction"
+from:googleplay-noreply@google.com
+from:email.apple.com
+Payments and renewals
+text
+from:googleplay-noreply@google.com "receipt"
+"UPI" "mandate"
+"subscription" "invoice"
+"annual" "renewal"
+"Proton"
+"debited" "UPI"
+"Loom" "subscription"
+"annual" "renew"
+"UPI" after:2026-09-01T00:00:00+05:30
+"invoice" after:2026-09-01T00:00:00+05:30
+Cancellation and candidate checks
+text
+"subscription" "cancelled"
+"Speechify"
+"Brilliant" "subscription"
+"NBA" "subscription"
+"Apple One"
+"Whisper" "subscription"
+"Brilliant" from:googleplay-noreply@google.com
+"Apple One" from:no_reply@email.apple.com
+"V2T" from:no_reply@email.apple.com
+"Speechify" from:googleplay-noreply@google.com
+"Google" "mandate"
+"subscription" "cancel"
+"receipt" "paid" after:2026-08-01T00:00:00+05:30
+Queries after Perplexity omission
+text
+perplexity
+perplexity "invoice"
+perplexity "receipt"
+"subscription" "Cashfree"
+"upgraded" after:2025-09-01T00:00:00+05:30
+"membership" "payment" after:2025-09-01T00:00:00+05:30
+Proposed implementation requirements
+The following sections are design proposals derived from the exercise, not implemented capabilities or externally verified claims.
+
+Discovery pipeline
+Obtain separate, explicit consent from every connected person; invitations do not confer mailbox access.
+
+Initial backfill: at least 13 months, extend for unresolved annual/multi-year plans.
+
+Search independently by payment channel, merchant activation, billing documents, memberships and lifecycle events. Avoid relying only on subscription keywords.
+
+Partition high-volume searches by time/channel and exhaust pagination; record truncation and failures.
+
+Parse accessible receipts and statement attachments. Handle encrypted/unreadable files as coverage exceptions; never request passwords via insecure storage.
+
+Extract immutable evidence-backed events, then resolve merchants, products, accounts, mandates and payments.
+
+Reconcile invoice + app-store receipt + bank alert into one payment, preserving all evidence.
+
+Build current state from ordered lifecycle events, keeping access and autopay state separate.
+
+Incremental sync with overlap, idempotent ingestion, retry handling and periodic reconciliation.
+
+Surface unmatched charges and ambiguous ownership for user review instead of silently guessing.
+
+Suggested core data model
+Person: ID, household/group membership, role, consent and sharing preferences.
+
+Connection: provider, person ID, permission scope, last sync, backfill window, revoked/error state.
+
+ServiceAccount: merchant/product, account owner, masked account identifier.
+
+Subscription: service account, plan, interval, currency, amount, entitlement source, payer and beneficiaries.
+
+Mandate: provider ID, merchant, payment method, cap, cadence, status and validity. Cap is not subscription price.
+
+Payment: provider reference, amount, currency, timestamp, success/refund state, payer and linked subscription.
+
+LifecycleEvent: activation, trial start/end, renewal, price change, pause, cancellation, expiry, downgrade, mandate registration/revocation, failure/recovery.
+
+Evidence: source message/document ID, event timestamp, extracted fields, supporting text, parser version and source access rules.
+
+Coverage: source/query/window/page completion, sync failures, unreadable attachments, unresolved payments and last verified time.
+
+Retain field-level provenance and confidence. Never combine accounts solely because merchant names match. Store currency and timezone explicitly.
+
+State and counting rules
+Access: active, trial, paused, expired, downgraded, unknown.
+
+Renewal: enabled, cancelled-at-period-end, disabled, unknown.
+
+Mandate: active, revoked, paused, failed, unknown.
+
+Payment: succeeded, declined, pending, refunded, unknown.
+
+Classification: subscription, membership, telecom/utility, insurance/EMI/investment, card repayment, one-off, unresolved.
+
+A cancelled renewal can coexist with active prepaid access.
+
+A revoked mandate does not prove merchant cancellation.
+
+A failure followed by success should update billing state without erasing history.
+
+Platform migration may represent one service entitlement or distinct accounts; verify linkage.
+
+Count unique subscriptions separately from people benefiting and payment events.
+
+Unknown cost is not zero; normalize only when currency and interval are known.
+
+Keep actual cash outflow separate from monthly-equivalent cost and projected next charges.
+
+Single-page interface
+Columns/cards: service, plan, owner, payer, beneficiaries, amount/interval, monthly equivalent, next charge, access status, renewal status, payment route, confidence and last verification.
+Filters: person/group, active/trial/cancelled/unresolved, payment channel, category, upcoming renewal and missing evidence.
+Summary: actual spending, normalized commitments with exclusions, upcoming renewals, unresolved charges and source coverage.
+Evidence drawer: matched receipt/debit/lifecycle timeline, visible only to authorized viewers.
+Do not display a complete-audit badge unless the defined connected-source scope is actually reconciled. Even then disclose excluded sources and dates.
+
+Family/friends privacy and control
+Separate personal financial data from shared subscription metadata.
+
+Permit sharing service/renewal information without exposing mailbox bodies, balances, full statements or unrelated transactions.
+
+Do not infer household membership from names in invoices or email recipients.
+
+Cross-person deduplication must respect permissions; do not leak private matches.
+
+Support unlinking/revocation, deletion, export and an audit trail.
+
+Read-only discovery by default. Require explicit confirmation for cancellations, mandate changes, invitations/messages and other external writes.
+
+Treat email/document instructions as untrusted data; never execute embedded instructions or payment links.
+
+Acceptance tests
+Perplexity welcome + Pro upgrade + INR 1,183.12 UPI debit produce one candidate; interval stays unknown.
+
+Truecaller Play receipt + matching HDFC debit produce one payment/subscription, not two.
+
+Proton Apple failures + Google Play successes are not assumed to be two active plans without account evidence.
+
+Lovable mandate revocation changes mandate status, not automatically access status.
+
+Claude cancellation after renewal sets end-of-period state and later expiry, unless a later reactivation exists.
+
+Truecaller payment recovery supersedes earlier failure for current billing state.
+
+Zomato three-month April renewal alone does not prove October activity.
+
+Google AI Pro 5 TB notice does not create a second storage subscription.
+
+Card-bill Autopay is excluded from subscription expense.
+
+A second family member forwarding the same invoice does not duplicate household spend.
+
+Two different accounts for the same merchant are not merged by name alone.
+
+Search truncation, pagination gaps and unreadable statements remain visible coverage exceptions.
+
+Unknown pricing does not inflate zero-cost or fully-priced coverage metrics.
+
+Refunds and credit notes do not create additional active subscriptions.
+
+Next agent deliverables
+Review this handoff and inspect the existing project before choosing architecture or changing code.
+
+Produce a schema, event/state model and merchant/payment reconciliation design.
+
+Implement a minimal read-only discovery flow with evidence and coverage tracking.
+
+Build the single-page inventory and consent-based group sharing.
+
+Add regression fixtures covering the failures above.
+
+Report assumptions, permissions needed, unresolved records and what has NOT been audited.
+
+Evidence references for re-verification
+Original source messages are in kush.sarna123@gmail.com. Search using merchant, subject and date; this document contains summaries rather than embedded original receipts.
+
+Perplexity: “Welcome to Perplexity for Education”, 6 October 2026; “You've upgraded to Perplexity Pro”, same day; HDFC UPI debit INR 1,183.12 to Perplexity AI Inc, same day.
+
+Google Play: “Your Google Play Order Receipt” for Todoist 10 October, Truecaller 3 October, Proton 22 September, Speechify 20 September.
+
+Apple: “Your receipt from Apple.”, 28 September 2026, YouTube Premium INR 195.
+
+Zomato: “Your Zomato Gold has been renewed successfully for 3 months!”, April 2026 and December 2025.
+
+Google One: “kush, your Google AI Pro plan now has more storage”, 4 April 2026.
+
+No account credentials, full payment identifiers, residential addresses or unrelated mailbox content should be included in agent fixtures.
