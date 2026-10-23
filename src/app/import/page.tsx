@@ -72,7 +72,7 @@ function canBulkAddGmailCandidate(
 
 function ImportContent() {
   const searchParams = useSearchParams();
-  const { currentProfile, household, subscriptions, addSubscription } = useApp();
+  const { currentProfile, household, subscriptions, addSubscription, deleteSubscription } = useApp();
 
   const [hasConsented, setHasConsented] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -119,6 +119,12 @@ function ImportContent() {
   // Unified Review Form State
   const [extractedData, setExtractedData] = useState<ExtractedItem | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  // Last bulk add, kept so it can be undone: created subscription ids + the candidates they came from.
+  const [lastBulk, setLastBulk] = useState<{
+    ids: string[];
+    candidates: ConsolidatedSubscriptionCandidate[];
+  } | null>(null);
+  const [undoing, setUndoing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   // Check initial connection status
@@ -576,12 +582,13 @@ function ImportContent() {
     }
 
     const savedIds: string[] = [];
+    const createdSubIds: string[] = [];
     setBulkGmailSaving(true);
     setErrorMessage("");
 
     try {
       for (const candidate of selected) {
-        await addSubscription({
+        const createdId = await addSubscription({
           household_id: household.id,
           service_name: candidate.service_name,
           plan_name: candidate.plan_name,
@@ -600,9 +607,13 @@ function ImportContent() {
           is_active: true,
           notes: `Imported via Gmail. Verified by ${currentProfile.name}.`,
         });
+        createdSubIds.push(createdId);
         savedIds.push(candidate.id);
       }
     } catch (error) {
+      if (createdSubIds.length > 0) {
+        setLastBulk({ ids: createdSubIds, candidates: selected.filter((c) => savedIds.includes(c.id)) });
+      }
       if (savedIds.length > 0) {
         const savedIdSet = new Set(savedIds);
         setGmailCandidates((current) =>
@@ -632,7 +643,34 @@ function ImportContent() {
     );
     setSelectedGmailCandidateIds(new Set());
     setScreenshotSavedCount(savedIds.length);
+    setLastBulk({ ids: createdSubIds, candidates: selected });
     setSavedSuccess(true);
+  };
+
+  const handleUndoBulk = async () => {
+    if (!lastBulk) return;
+    setUndoing(true);
+    const remaining: string[] = [];
+    for (const id of lastBulk.ids) {
+      try {
+        await deleteSubscription(id);
+      } catch {
+        remaining.push(id);
+      }
+    }
+    const undoneCount = lastBulk.ids.length - remaining.length;
+    // Put back candidates for the removed rows so nothing is lost from the review list.
+    const restored = lastBulk.candidates.slice(0, undoneCount);
+    setGmailCandidates((current) => [...restored, ...current]);
+    setLastBulk(remaining.length ? { ids: remaining, candidates: lastBulk.candidates.slice(undoneCount) } : null);
+    setSavedSuccess(false);
+    setScreenshotSavedCount(0);
+    setErrorMessage(
+      remaining.length
+        ? `Undid ${undoneCount}, but ${remaining.length} could not be removed. Delete them from the Subscriptions page.`
+        : ""
+    );
+    setUndoing(false);
   };
 
   // 5. Confirm and save the selected screenshot entries.
@@ -1256,6 +1294,22 @@ function ImportContent() {
                             {cand.status === "payment_failed" && (
                               <span className="text-[10px] font-bold uppercase tracking-wider bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded-md">
                                 Payment Failed
+                              </span>
+                            )}
+
+                            {cand.access_state === "active_until_period_end" && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider bg-sky-100 text-sky-800 px-2 py-0.5 rounded-md">
+                                {cand.access_end_date ? `Cancelled, access until ${cand.access_end_date}` : "Cancelled, access until period end"}
+                              </span>
+                            )}
+                            {cand.mandate_state === "revoked" && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider bg-violet-100 text-violet-800 px-2 py-0.5 rounded-md">
+                                Autopay mandate revoked
+                              </span>
+                            )}
+                            {cand.price_known === false && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                                Price unknown
                               </span>
                             )}
 
@@ -1891,6 +1945,15 @@ function ImportContent() {
             >
               Import Another
             </button>
+            {lastBulk && lastBulk.ids.length > 0 && (
+              <button
+                onClick={() => void handleUndoBulk()}
+                disabled={undoing}
+                className="px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-rose-300 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+              >
+                {undoing ? "Undoing..." : `Undo (remove ${lastBulk.ids.length} just added)`}
+              </button>
+            )}
             <Link
               href="/subscriptions"
               className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 shadow-sm"
