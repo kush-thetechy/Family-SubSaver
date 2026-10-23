@@ -513,6 +513,45 @@ function ImportContent() {
     });
   };
 
+  /** Fill a missing price or interval in place, then make the row bulk-selectable. */
+  const handleQuickFillCandidate = (
+    id: string,
+    patch: { amount_rupees?: number; billing_cycle?: BillingCycle }
+  ) => {
+    setGmailCandidates((current) =>
+      current.map((candidate) =>
+        candidate.id === id
+          ? {
+              ...candidate,
+              ...patch,
+              needs_review_reasons: candidate.needs_review_reasons.filter((reason) => {
+                if (patch.amount_rupees && /price is unknown/i.test(reason)) return false;
+                if (patch.billing_cycle && /cycle is unknown/i.test(reason)) return false;
+                return true;
+              }),
+            }
+          : candidate
+      )
+    );
+    setSelectedGmailCandidateIds((current) => {
+      const target = gmailCandidates.find((candidate) => candidate.id === id);
+      if (!target || target.status !== "likely_active") return current;
+      const merged = { ...target, ...patch };
+      if (!canBulkAddGmailCandidate(merged)) return current;
+      return new Set(current).add(id);
+    });
+  };
+
+  const handleDismissUnselected = () => {
+    setDismissedCandidateIds((prev) => {
+      const next = new Set(prev);
+      for (const candidate of gmailCandidates) {
+        if (!selectedGmailCandidateIds.has(candidate.id)) next.add(candidate.id);
+      }
+      return next;
+    });
+  };
+
   const handleDismissCandidate = (id: string) => {
     setDismissedCandidateIds((prev) => new Set([...prev, id]));
     setSelectedGmailCandidateIds((prev) => {
@@ -1139,6 +1178,17 @@ function ImportContent() {
                   >
                     Clear selection
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleDismissUnselected}
+                    disabled={
+                      bulkGmailSaving ||
+                      activeCandidates.every((candidate) => selectedGmailCandidateIds.has(candidate.id))
+                    }
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    Dismiss everything not selected
+                  </button>
                 </div>
               </div>
 
@@ -1360,6 +1410,52 @@ function ImportContent() {
                         )}
                       </div>
 
+                      {/* Quick fill: finish an incomplete candidate without opening the full form */}
+                      {!canBulkAdd &&
+                        !cand.is_possible_duplicate &&
+                        (cand.status === "likely_active" || cand.status === "needs_confirmation") && (
+                          <div
+                            className="flex flex-wrap items-end gap-3 rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 text-xs dark:border-indigo-900 dark:bg-indigo-950/20"
+                            data-testid="quick-fill"
+                          >
+                            <label className="flex flex-col gap-1 font-semibold text-slate-700 dark:text-slate-200">
+                              Price (₹)
+                              <input
+                                type="number"
+                                min={1}
+                                inputMode="decimal"
+                                defaultValue={cand.amount_rupees ?? ""}
+                                onBlur={(event) => {
+                                  const value = Number(event.target.value);
+                                  if (value > 0) handleQuickFillCandidate(cand.id, { amount_rupees: value });
+                                }}
+                                className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1 font-semibold text-slate-700 dark:text-slate-200">
+                              Billed
+                              <select
+                                value={cand.billing_cycle}
+                                onChange={(event) => {
+                                  if (event.target.value !== "unknown") {
+                                    handleQuickFillCandidate(cand.id, {
+                                      billing_cycle: event.target.value as BillingCycle,
+                                    });
+                                  }
+                                }}
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800"
+                              >
+                                <option value="unknown">Choose...</option>
+                                <option value="monthly">Monthly</option>
+                                <option value="quarterly">Quarterly</option>
+                                <option value="half_yearly">Every 6 months</option>
+                                <option value="annual">Yearly</option>
+                              </select>
+                            </label>
+                            <span className="pb-1.5 text-slate-500">Fill both and this row can be added in bulk.</span>
+                          </div>
+                        )}
+
                       {/* Card Action Buttons */}
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                         <div>
@@ -1416,7 +1512,7 @@ function ImportContent() {
                 ))}
               </div>
 
-              <div className="flex justify-end">
+              <div className="sticky bottom-20 md:bottom-4 z-10 flex justify-end rounded-2xl bg-white/90 p-2 backdrop-blur dark:bg-slate-900/90">
                 <button
                   type="button"
                   onClick={handleSaveSelectedGmailCandidates}

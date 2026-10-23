@@ -1555,6 +1555,20 @@ export async function searchGmailMultiLane(
 // ============================================================================
 
 export const SAMPLE_DISCOVERY_EVIDENCE: DiscoveryEvidence[] = [
+  // 0. UPI debit with no stated interval: needs a quick price/interval confirmation
+  {
+    id: "demo-ev-0",
+    source: "gmail",
+    evidence_type: "service_event",
+    message_id: "demo-msg-perplexity",
+    sender: "Perplexity <team@mail.perplexity.example>",
+    subject: "You've upgraded to Perplexity Pro",
+    date: "2026-10-06",
+    currency: "INR",
+    billing_channel: "UPI",
+    merchant_raw: "Perplexity",
+    summary: "Perplexity Pro upgrade confirmation. No price or billing interval stated.",
+  },
   // 1. Google Play Todoist
   {
     id: "demo-ev-1",
