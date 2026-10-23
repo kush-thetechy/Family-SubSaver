@@ -600,14 +600,22 @@ function ImportContent() {
           payer_id: currentProfile.id,
           user_ids: [currentProfile.id],
           billing_channel: candidate.billing_channel,
-          renewal_date: candidate.renewal_date || undefined,
+          // A cancelled subscription is not renewing, so no future renewal date is recorded.
+          renewal_date:
+            candidate.renewal_state === "cancelled"
+              ? undefined
+              : candidate.renewal_date || undefined,
           visibility: "full_details",
           source: "import",
           source_type: "gmail",
           source_connection_id: gmailConnectionId ?? undefined,
           imported_at: new Date().toISOString(),
           is_active: true,
-          notes: `Imported via Gmail. Verified by ${currentProfile.name}.`,
+          notes: `Imported via Gmail. Verified by ${currentProfile.name}.${
+            candidate.renewal_state === "cancelled"
+              ? ` Cancelled; access until ${candidate.access_end_date ?? "period end"}.`
+              : ""
+          }`,
         });
         createdSubIds.push(createdId);
         savedIds.push(candidate.id);
@@ -1278,7 +1286,14 @@ function ImportContent() {
                             </span>
 
                             {/* Status Badge */}
-                            {cand.status === "likely_active" && (
+                            {cand.status === "likely_active" &&
+                              cand.renewal_state === "cancelled" && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 px-2 py-0.5 rounded-md">
+                                Access active, not renewing
+                              </span>
+                            )}
+                            {cand.status === "likely_active" &&
+                              cand.renewal_state !== "cancelled" && (
                               <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-md">
                                 Likely Active
                               </span>
@@ -1300,7 +1315,7 @@ function ImportContent() {
                             )}
 
                             {cand.access_state === "active_until_period_end" && (
-                              <span className="text-[10px] font-bold uppercase tracking-wider bg-sky-100 text-sky-800 px-2 py-0.5 rounded-md">
+                              <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
                                 {cand.access_end_date ? `Cancelled, access until ${cand.access_end_date}` : "Cancelled, access until period end"}
                               </span>
                             )}
