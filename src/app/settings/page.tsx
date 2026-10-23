@@ -86,7 +86,7 @@ export default function SettingsPage() {
         throw new Error(result.error || "Could not withdraw Gmail consent.");
       }
       setActionMessage(
-        "Gmail consent was withdrawn. The app will not start new Gmail scans until you consent again."
+        "Gmail consent was withdrawn. The app will not start new Gmail scans until you consent again. This did not revoke the app's access in your Google Account and did not delete records already imported; use Disconnect Gmail and Delete Gmail-imported records for those."
       );
     } catch (error) {
       setActionError(
@@ -273,6 +273,9 @@ export default function SettingsPage() {
                 >
                   Withdraw Gmail consent
                 </button>
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Withdrawing consent only stops new scans. It does not revoke Google access (Disconnect Gmail does that) and does not delete imported records (Delete Gmail-imported records does that).
+                </p>
               </div>
             )}
             <div className="pt-4">
