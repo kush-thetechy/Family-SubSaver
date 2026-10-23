@@ -95,7 +95,7 @@ export async function GET(request: Request) {
   const providerError = callbackUrl.searchParams.get("error");
   const code = callbackUrl.searchParams.get("code");
   const returnedState = callbackUrl.searchParams.get("state");
-  const stateCookie = cookies().get("fss_gmail_oauth_state")?.value;
+  const stateCookie = (await cookies()).get("fss_gmail_oauth_state")?.value;
   let flowState: OAuthFlowState | null = null;
   try {
     flowState = stateCookie ? (JSON.parse(stateCookie) as OAuthFlowState) : null;
@@ -135,7 +135,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user || authData.user.id !== flowState.userId) {
     return redirectToImport(

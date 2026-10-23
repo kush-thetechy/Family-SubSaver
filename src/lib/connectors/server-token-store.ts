@@ -112,9 +112,9 @@ export function createServerSession(
   };
 }
 
-export function getSessionFromRequestCookies(): ServerUserSession | null {
+export async function getSessionFromRequestCookies(): Promise<ServerUserSession | null> {
   try {
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     return decryptSession(cookieStore.get(SESSION_COOKIE_NAME)?.value);
   } catch {
     return null;

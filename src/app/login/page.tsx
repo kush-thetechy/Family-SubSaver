@@ -1,28 +1,33 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase";
 
 const allowSignUp = process.env.NEXT_PUBLIC_ALLOW_SIGN_UP === "true";
 
-export default function LoginPage({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [mode, setMode] = useState<"sign_in" | "sign_up">("sign_in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState(
-    typeof searchParams?.error === "string" ? searchParams.error : ""
+    searchParams.get("error") ?? ""
   );
-  const setupRequired = searchParams?.setup === "required";
+  const setupRequired = searchParams.get("setup") === "required";
   const [warning, setWarning] = useState(
-    typeof searchParams?.warning === "string" ? searchParams.warning : ""
+    searchParams.get("warning") ?? ""
   );
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
