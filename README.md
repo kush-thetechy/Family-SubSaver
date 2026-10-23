@@ -321,7 +321,7 @@ Use the repository's actual package manager if it uses pnpm or yarn.
 
 Create `.env.local` using `.env.example` if available. Never commit `.env.local` or real keys.
 
-Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from your Supabase project's API settings. Apply all SQL migrations in `supabase/migrations/` in filename order before creating accounts. They create private personal households and subscription tables with Row Level Security, the Gmail scan quota, versioned consent, and private scan-coverage records; family invitations are not enabled yet. The app requires sign-in by default and never falls back to demo mode unless `NEXT_PUBLIC_ENABLE_DEMO_MODE=true` is explicitly set.
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from your Supabase project's API settings. Apply all SQL migrations in `supabase/migrations/` in filename order before creating accounts (`supabase/archive/` holds a superseded draft that must not be applied). They create private personal households and subscription tables with Row Level Security, the Gmail scan quota, versioned consent, and private scan-coverage records; family invitations are not enabled yet. The app requires sign-in by default and never falls back to demo mode unless `NEXT_PUBLIC_ENABLE_DEMO_MODE=true` is explicitly set.
 
 For a private Gmail pilot, leave `NEXT_PUBLIC_ALLOW_SIGN_UP=false` and `NEXT_PUBLIC_ENABLE_DEMO_MODE=false`. Create one test user in Supabase Authentication after applying the migrations, then sign in at `/login`. The pilot account stores subscriptions in Supabase. Enable `NEXT_PUBLIC_ALLOW_SIGN_UP=true` only when ready to accept public registrations.
 
