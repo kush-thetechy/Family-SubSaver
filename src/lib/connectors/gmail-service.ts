@@ -773,15 +773,33 @@ const REFUND_PATTERN =
 
 
 const GENERIC_SENDER_NAMES = /^(billing|noreply|no-reply|no_reply|donotreply|do-not-reply|support|team|alerts?|info|payments?|notifications?|accounts?|receipts?|invoice|invoices|hello|care|help|admin|service|customer.?care)$/i;
-const SHARED_SENDER_DOMAINS = /(^|\.)(gmail|googlemail|outlook|hotmail|yahoo|icloud|google|apple|amazon|razorpay|paytm|phonepe|npci|sendgrid|mailchimp)\./i;
+const SHARED_SENDER_DOMAINS = /(^|\.)(gmail|googlemail|outlook|hotmail|yahoo|icloud|google|apple|amazon|razorpay|paytm|phonepe|npci|sendgrid|mailchimp|stripe|paypal|payu|payumoney|billdesk|cashfree|juspay|ccavenue|instamojo|cashfree|amazonpay|mobikwik|freecharge|zohocorp|intuit|squareup)\./i;
 
 /** Best-effort merchant name from the sender: display name, else the domain label. */
+const PAYMENT_PROCESSOR_NAMES = /\b(stripe|paypal|payu|payumoney|billdesk|cashfree|juspay|ccavenue|instamojo|razorpay|paytm|phonepe|amazon pay|mobikwik|freecharge|square)\b/i;
+
+/** Names come from untrusted email text: keep letters, digits and a few safe symbols, cap length. */
+export function sanitizeServiceLabel(raw: string): string | undefined {
+  const cleaned = raw.replace(/[^A-Za-z0-9&.' -]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40).trim();
+  if (!/[A-Za-z]{3}/.test(cleaned)) return undefined;
+  // A sentence-like display name is more likely an instruction than a service name.
+  if (cleaned.split(" ").length > 5) return undefined;
+  return cleaned;
+}
+
 export function merchantFromSender(sender: string): string | undefined {
+  const raw = merchantFromSenderRaw(sender);
+  if (!raw) return undefined;
+  return sanitizeServiceLabel(raw);
+}
+
+function merchantFromSenderRaw(sender: string): string | undefined {
   const m = sender.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
   const display = (m ? m[1] : "").trim();
   const addr = (m ? m[2] : sender).trim().toLowerCase();
   const [local, domain = ""] = addr.split("@");
   if (/bank|alerts?\b|upi|nach|mandate/i.test(`${domain} ${local} ${display}`)) return undefined;
+  if (PAYMENT_PROCESSOR_NAMES.test(display)) return undefined;
   if (display && !GENERIC_SENDER_NAMES.test(display) && /[A-Za-z]{3}/.test(display) && !/@/.test(display)) {
     return normalizeServiceName(display.replace(/\b(billing|team|support|notifications?|receipts?|no-?reply)\b/gi, "").trim() || display);
   }
@@ -889,8 +907,10 @@ export function parseGeneralGmailMessage(
     return null;
   }
 
+  let merchantInferred = false;
   if (!matchedService) {
     if (evidenceType === "service_event") return null;
+    merchantInferred = true;
     const fromSender = merchantFromSender(sender);
     const merchantMatch = fromSender ? null : clean.match(/(?:at|to|for|towards|merchant:?)\s+([A-Za-z0-9&.\s]{3,30})(?:\s+on|\s+via|\s+ref|\s+dated|$)/i);
     if (fromSender) {
@@ -916,6 +936,7 @@ export function parseGeneralGmailMessage(
     currency: "INR",
     billing_channel: "Direct Email Invoice",
     merchant_raw: matchedService,
+    merchant_inferred: merchantInferred || undefined,
     frequency_raw: cycle !== "unknown" ? cycle : undefined,
     summary: `${matchedService} email notice (${evidenceType.replace(/_/g, " ")}): ${amountRupees ? `₹${amountRupees}` : "amount unknown"}${cycle !== "unknown" ? `/${cycle}` : ""}.`,
   };
@@ -1103,6 +1124,8 @@ export function consolidateEvidenceToCandidates(
     const amount = lastPayment?.amount || evs.find((e) => (e.amount_rupees ?? 0) > 0 && e.evidence_type !== "refund")?.amount_rupees;
     const priceKnown = Boolean(amount && amount > 0);
     const needsReview: string[] = [];
+    const nameInferred = evs.some((e) => e.merchant_inferred);
+    if (nameInferred) needsReview.push("Service name was guessed from the sender; confirm it is the right service");
     if (cycle === "unknown") needsReview.push("Billing cycle is unknown and needs confirmation");
     if (!priceKnown) needsReview.push("Price is unknown; confirm the current amount before saving");
     if (mandate === "registered") {
@@ -1177,6 +1200,7 @@ export function consolidateEvidenceToCandidates(
           }
         : undefined,
       confidence: bestType,
+      name_inferred: nameInferred || undefined,
       needs_review_reasons: needsReview,
       evidence: evs,
     });

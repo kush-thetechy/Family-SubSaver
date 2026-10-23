@@ -1,6 +1,7 @@
 "use client";
 
 import { planBulkUndo } from "@/lib/bulk-undo";
+import { AlreadyImportedError } from "@/lib/already-imported";
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -586,12 +587,16 @@ function ImportContent() {
 
     const savedIds: string[] = [];
     const createdSubIds: string[] = [];
+    const createdCandidates: ConsolidatedSubscriptionCandidate[] = [];
+    let alreadyAdded = 0;
     setBulkGmailSaving(true);
     setErrorMessage("");
 
     try {
       for (const candidate of selected) {
+        try {
         const createdId = await addSubscription({
+          import_key: candidate.import_key,
           household_id: household.id,
           service_name: candidate.service_name,
           plan_name: candidate.plan_name,
@@ -619,11 +624,17 @@ function ImportContent() {
           }`,
         });
         createdSubIds.push(createdId);
+        createdCandidates.push(candidate);
+        } catch (err) {
+          // Same import saved earlier (retry or double click): not an error, not a new row.
+          if (!(err instanceof AlreadyImportedError)) throw err;
+          alreadyAdded += 1;
+        }
         savedIds.push(candidate.id);
       }
     } catch (error) {
       if (createdSubIds.length > 0) {
-        setLastBulk({ ids: createdSubIds, candidates: selected.filter((c) => savedIds.includes(c.id)) });
+        setLastBulk({ ids: createdSubIds, candidates: createdCandidates });
       }
       if (savedIds.length > 0) {
         const savedIdSet = new Set(savedIds);
@@ -654,7 +665,10 @@ function ImportContent() {
     );
     setSelectedGmailCandidateIds(new Set());
     setScreenshotSavedCount(savedIds.length);
-    setLastBulk({ ids: createdSubIds, candidates: selected });
+    setLastBulk(createdSubIds.length ? { ids: createdSubIds, candidates: createdCandidates } : null);
+    if (alreadyAdded > 0) {
+      setErrorMessage(`${alreadyAdded} item(s) were already added earlier and were skipped.`);
+    }
     setSavedSuccess(true);
   };
 

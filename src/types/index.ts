@@ -66,6 +66,8 @@ export interface Subscription {
   source: "manual" | "import" | "demo";
   source_type?: "manual" | "screenshot" | "gmail";
   source_connection_id?: string;
+  /** Opaque idempotency key of the import operation that created this row. */
+  import_key?: string;
   imported_at?: string;
   notes?: string;
   created_at: string;
@@ -160,6 +162,8 @@ export interface DiscoveryEvidence {
   last4?: string;
   /** Account the evidence belongs to (email, username, workspace). Never merge accounts by name alone. */
   account_ref?: string;
+  /** true when merchant_raw was guessed from the sender rather than matched to a known service. */
+  merchant_inferred?: boolean;
   summary: string;
 }
 
@@ -176,6 +180,10 @@ export type RenewalState = "renewing" | "cancelled" | "payment_failed" | "unknow
 export type MandateState = "none" | "registered" | "revoked";
 
 export interface ConsolidatedSubscriptionCandidate {
+  /** Opaque, server-made idempotency key for saving this candidate once. */
+  import_key?: string;
+  /** The service name was guessed from the sender; the user must confirm it. */
+  name_inferred?: boolean;
   access_state?: AccessState;
   renewal_state?: RenewalState;
   mandate_state?: MandateState;

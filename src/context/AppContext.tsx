@@ -1,5 +1,6 @@
 "use client";
 
+import { AlreadyImportedError } from "@/lib/already-imported";
 import React, { createContext, useContext, useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
@@ -385,7 +386,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
       .select("*")
       .single();
-    if (error) throw error;
+    if (error) {
+      if (sub.import_key && (error as { code?: string }).code === "23505") {
+        throw new AlreadyImportedError();
+      }
+      throw error;
+    }
     setSubscriptions((previous) => [data as Subscription, ...previous]);
     return (data as Subscription).id;
   };
