@@ -9,9 +9,13 @@ Nothing here has been submitted to Google. Gmail stays disabled (`GMAIL_MODE=dis
    added as test users can connect, server gate `GMAIL_MODE=test` with a user-id allowlist.
    Good for the owner to try a real scan. Not available to the public.
 2. Public launch. Any user can connect their own Gmail. `gmail.readonly` is a restricted
-   scope, so Google requires scope verification, brand verification and, because the app
-   reads Gmail through a server, an annual independent security assessment (CASA, by a
-   Google-approved assessor). This costs money and weeks, and needs the owner's approval.
+   scope. Google's page says apps requesting restricted scopes need verification, and that
+   an app which "accesses or has the capability to access Google user data from or through a
+   server" must have an annual security assessment by a Google-approved assessor (CASA). The
+   same page says restricted-scope verification "can potentially take several weeks".
+   Whether this app qualifies for any exception, what the assessment costs, and the real
+   timeline are UNKNOWN until checked with Google and an assessor. Do not quote a price or
+   duration to the user from this document.
    Source: https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification
    and https://support.google.com/cloud/answer/13464321
 
@@ -39,7 +43,7 @@ assessor price. Check the live Google pages before relying on them.
 | Authorised domains + branding on consent screen | Partly set (testing). Production branding not submitted. |
 | Scope justification | Draft below. |
 | Demo video (OAuth flow, consent screen, scope use, data shown in app) | Not recorded. Script below. |
-| Security assessment (CASA) | Not started. Owner approval and spend required. |
+| Security assessment (CASA) | Not started. Cost, timeline and whether it is required for this exact setup: unknown. Any spend needs owner approval. |
 | Data deletion and retention statement | In guardrails doc; needs to be in privacy policy. |
 
 ## Draft scope justification (gmail.readonly)
