@@ -471,24 +471,26 @@ function SubscriptionsContent() {
               </div>
 
               {/* Action Buttons */}
+              {(isDemoMode || isOwn) && !sub.isRedacted && (
               <div className="mt-5 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
                 <button
                   onClick={() => openEditModal(sub)}
-                  disabled={sub.isRedacted || (!isDemoMode && !isOwn)}
+                  disabled={sub.isRedacted}
                   className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-40"
-                  title={!isDemoMode && !isOwn ? "Only the payer can edit this" : "Edit subscription"}
+                  title="Edit subscription"
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => void handleDelete(sub.id, sub.service_name)}
-                  disabled={sub.isRedacted || (!isDemoMode && !isOwn)}
+                  disabled={sub.isRedacted}
                   className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-40"
                   title="Delete subscription"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
+              )}
             </div>
           );
         })}

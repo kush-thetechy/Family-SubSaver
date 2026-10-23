@@ -107,7 +107,7 @@ export default function HouseholdPage() {
                 <strong>Totals Only:</strong> Included in aggregated household math, but service title and details are redacted for other members.
               </li>
               <li>
-                <strong>Hidden:</strong> Completely confidential to the paying member; mathematically isolated from group totals to prevent inference leaks.
+                <strong>Hidden:</strong> Never shown to other members and not included in what they see of household totals.
               </li>
             </ul>
           </div>
