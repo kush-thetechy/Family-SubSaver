@@ -71,7 +71,7 @@ export function FamilyLinkPanel() {
           value={label}
           maxLength={80}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="Who is this for? (optional, e.g. Mum)"
+          placeholder="Who is this for? (optional)"
           className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
         />
         <button

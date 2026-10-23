@@ -605,10 +605,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     score,
     label:
       score >= 85
-        ? "Comprehensive Inventory"
+        ? "Recorded entries look complete"
         : score >= 60
-          ? "Partial Audit in Progress"
-          : "Initial Setup",
+          ? "Some recorded entries are incomplete"
+          : "Few or no entries recorded",
     isComplete: score >= 90 && unconfirmedCount === 0,
     missingPayerCount,
     missingUsersCount,

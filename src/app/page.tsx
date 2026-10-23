@@ -83,7 +83,7 @@ export default function DashboardPage() {
       {/* Top Greeting & Quick Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+          <h1 className="text-lg sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
             Household Spend Overview
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
@@ -121,7 +121,7 @@ export default function DashboardPage() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                  {auditProgress.label} ({auditProgress.score}% complete)
+                  {auditProgress.label} ({auditProgress.score}% of recorded details filled in)
                 </span>
                 {!auditProgress.isComplete && (
                   <span className="text-[10px] font-medium uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full">
@@ -131,8 +131,8 @@ export default function DashboardPage() {
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
                 {auditProgress.isComplete
-                  ? "All subscriptions have verified payers, users, and billing channels."
-                  : `Totals reflect only recorded subscriptions. ${auditProgress.unconfirmedCount} service(s) still lack confirmed renewal details.`}
+                  ? "Every entry you recorded has a payer, users, renewal date and billing channel. This does not check that every subscription you really pay for is listed."
+                  : `Totals reflect only recorded subscriptions, not necessarily everything you pay for. ${auditProgress.unconfirmedCount} of your entries still lack a renewal date or billing channel.`}
               </p>
             </div>
           </div>
@@ -158,7 +158,7 @@ export default function DashboardPage() {
                 <CreditCard className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            <div className="text-lg sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               {formatINR(summary.monthlyRecurringPaise)}
               <span className="text-xs font-normal text-slate-500 dark:text-slate-400 ml-1">
                 /mo
@@ -181,7 +181,7 @@ export default function DashboardPage() {
                 <Calendar className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            <div className="text-lg sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               {formatINR(summary.annualizedRecurringPaise)}
               <span className="text-xs font-normal text-slate-500 dark:text-slate-400 ml-1">
                 /yr
@@ -204,7 +204,7 @@ export default function DashboardPage() {
                 <Layers className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            <div className="text-lg sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               {summary.activeCount}
             </div>
           </div>
@@ -231,7 +231,7 @@ export default function DashboardPage() {
                 <Sparkles className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight">
+            <div className="text-lg sm:text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight">
               {totalPotentialMonthlySavingsPaise > 0
                 ? formatINR(totalPotentialMonthlySavingsPaise)
                 : "₹0"}

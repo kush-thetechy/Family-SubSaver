@@ -417,6 +417,8 @@ function ImportContent() {
             .filter(
               (candidate) =>
                 candidate.status === "likely_active" &&
+                // Cancelled-with-access items are not pre-selected: the user opts in.
+                candidate.renewal_state !== "cancelled" &&
                 canBulkAddGmailCandidate(candidate)
             )
             .map((candidate) => candidate.id)
