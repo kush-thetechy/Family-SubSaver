@@ -49,7 +49,7 @@ interface AppContextType {
   switchActiveProfile: (userId: string) => void;
   addSubscription: (
     sub: Omit<Subscription, "id" | "created_at" | "updated_at">
-  ) => Promise<void>;
+  ) => Promise<string>;
   updateSubscription: (
     id: string,
     updates: Partial<Subscription>
@@ -368,7 +368,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updated_at: new Date().toISOString(),
       };
       setSubscriptions((previous) => [newSub, ...previous]);
-      return;
+      return newSub.id;
     }
 
     const supabase = getSupabaseBrowserClient();
@@ -387,6 +387,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .single();
     if (error) throw error;
     setSubscriptions((previous) => [data as Subscription, ...previous]);
+    return (data as Subscription).id;
   };
 
   const updateSubscription = async (
