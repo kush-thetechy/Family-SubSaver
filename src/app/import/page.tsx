@@ -1,5 +1,6 @@
 "use client";
 
+import { planBulkUndo } from "@/lib/bulk-undo";
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -660,24 +661,25 @@ function ImportContent() {
   const handleUndoBulk = async () => {
     if (!lastBulk) return;
     setUndoing(true);
-    const remaining: string[] = [];
+    const failed = new Set<string>();
     for (const id of lastBulk.ids) {
       try {
         await deleteSubscription(id);
       } catch {
-        remaining.push(id);
+        failed.add(id);
       }
     }
-    const undoneCount = lastBulk.ids.length - remaining.length;
-    // Put back candidates for the removed rows so nothing is lost from the review list.
-    const restored = lastBulk.candidates.slice(0, undoneCount);
-    setGmailCandidates((current) => [...restored, ...current]);
-    setLastBulk(remaining.length ? { ids: remaining, candidates: lastBulk.candidates.slice(undoneCount) } : null);
-    setSavedSuccess(false);
-    setScreenshotSavedCount(0);
+    const plan = planBulkUndo(lastBulk, failed);
+    // Put back candidates only for rows that were really removed.
+    setGmailCandidates((current) => [...plan.restored, ...current]);
+    setLastBulk(plan.remaining);
+    if (!plan.remaining) {
+      setSavedSuccess(false);
+      setScreenshotSavedCount(0);
+    }
     setErrorMessage(
-      remaining.length
-        ? `Undid ${undoneCount}, but ${remaining.length} could not be removed. Delete them from the Subscriptions page.`
+      plan.remaining
+        ? `Undid ${plan.undoneCount}, but ${plan.remaining.ids.length} could not be removed. Try Undo again or delete them from the Subscriptions page.`
         : ""
     );
     setUndoing(false);
