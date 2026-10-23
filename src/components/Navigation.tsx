@@ -195,7 +195,7 @@ export function Navigation() {
 
       {/* Mobile Bottom Navigation Bar */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 backdrop-blur pb-safe">
-        <nav className="flex items-center justify-around px-2 py-1.5">
+        <nav className="flex items-stretch justify-between gap-0 px-1 py-1.5">
           {navLinks.map((link) => {
             const Icon = link.icon;
             const isActive = pathname === link.href;
@@ -203,14 +203,14 @@ export function Navigation() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-lg text-[10px] font-medium transition-colors ${
+                className={`flex flex-1 min-w-0 flex-col items-center gap-0.5 py-1 px-0 tracking-tighter rounded-lg text-[10px] font-medium transition-colors ${
                   isActive
                     ? "text-indigo-600 dark:text-indigo-400"
                     : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
                 }`}
               >
                 <Icon className={`w-5 h-5 ${isActive ? "stroke-[2.5]" : ""}`} />
-                <span>{link.label}</span>
+                <span className="max-w-full truncate">{link.label}</span>
               </Link>
             );
           })}
