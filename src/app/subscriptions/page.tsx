@@ -240,7 +240,11 @@ function SubscriptionsContent() {
         }
 
         // Payer filter
-        if (selectedPayer !== "all" && sub.payer_id !== selectedPayer) {
+        if (
+          selectedPayer !== "all" &&
+          (sub.payer_id !== selectedPayer ||
+            (sub.visibility === "totals_only" && sub.payer_id !== currentProfile.id))
+        ) {
           return false;
         }
 
