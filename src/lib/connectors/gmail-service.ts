@@ -771,6 +771,27 @@ export function isCardBillAutopay(text: string): boolean {
 const REFUND_PATTERN =
   /\b(has been refunded|have refunded|we('| ha)ve refunded|refund (has been )?(initiated|processed|issued|of)|your refund|credit note|payment reversed|reversal of)\b/i;
 
+
+const GENERIC_SENDER_NAMES = /^(billing|noreply|no-reply|no_reply|donotreply|do-not-reply|support|team|alerts?|info|payments?|notifications?|accounts?|receipts?|invoice|invoices|hello|care|help|admin|service|customer.?care)$/i;
+const SHARED_SENDER_DOMAINS = /(^|\.)(gmail|googlemail|outlook|hotmail|yahoo|icloud|google|apple|amazon|razorpay|paytm|phonepe|npci|sendgrid|mailchimp)\./i;
+
+/** Best-effort merchant name from the sender: display name, else the domain label. */
+export function merchantFromSender(sender: string): string | undefined {
+  const m = sender.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  const display = (m ? m[1] : "").trim();
+  const addr = (m ? m[2] : sender).trim().toLowerCase();
+  const [local, domain = ""] = addr.split("@");
+  if (/bank|alerts?\b|upi|nach|mandate/i.test(`${domain} ${local} ${display}`)) return undefined;
+  if (display && !GENERIC_SENDER_NAMES.test(display) && /[A-Za-z]{3}/.test(display) && !/@/.test(display)) {
+    return normalizeServiceName(display.replace(/\b(billing|team|support|notifications?|receipts?|no-?reply)\b/gi, "").trim() || display);
+  }
+  if (!domain || SHARED_SENDER_DOMAINS.test(`${domain}.`)) return undefined;
+  const parts = domain.split(".");
+  const label = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+  if (!label || label.length < 3) return undefined;
+  return normalizeServiceName(label.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+}
+
 export function parseGeneralGmailMessage(
   message: GmailMessage
 ): DiscoveryEvidence | null {
@@ -870,8 +891,11 @@ export function parseGeneralGmailMessage(
 
   if (!matchedService) {
     if (evidenceType === "service_event") return null;
-    const merchantMatch = clean.match(/(?:at|to|for|towards|merchant:?)\s+([A-Za-z0-9&.\s]{3,30})(?:\s+on|\s+via|\s+ref|\s+dated|$)/i);
-    if (merchantMatch && merchantMatch[1].trim()) {
+    const fromSender = merchantFromSender(sender);
+    const merchantMatch = fromSender ? null : clean.match(/(?:at|to|for|towards|merchant:?)\s+([A-Za-z0-9&.\s]{3,30})(?:\s+on|\s+via|\s+ref|\s+dated|$)/i);
+    if (fromSender) {
+      matchedService = fromSender;
+    } else if (merchantMatch && merchantMatch[1].trim()) {
       matchedService = normalizeServiceName(merchantMatch[1].trim());
     } else {
       matchedService = "Subscription Service";
@@ -1332,6 +1356,8 @@ const SERVICE_LIFECYCLE_KEYWORDS = [
 ];
 
 const PAYMENT_ACTIVITY_KEYWORDS = [
+  "refund",
+  "refunded",
   "paid",
   "payment",
   "debited",
@@ -1366,6 +1392,11 @@ const MANDATE_KEYWORDS = [
   "pre-debit",
   "pre debit",
   "scheduled debit",
+  "mandate revoked",
+  "mandate cancelled",
+  "mandate canceled",
+  "mandate has been revoked",
+  "mandate cancellation",
 ];
 
 const KNOWN_PROVIDER_SEARCH_TERMS = Array.from(
