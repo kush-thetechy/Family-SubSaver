@@ -58,7 +58,7 @@ export const KNOWN_SERVICES: ServiceDescriptor[] = [
   { name: "Speechify", category: "utilities", keywords: ["speechify"] },
   { name: "Brilliant", category: "utilities", keywords: ["brilliant.org", "brilliant premium"] },
   { name: "Loom", category: "utilities", keywords: ["loom business", "loom.com"] },
-  { name: "Lovable", category: "utilities", keywords: ["lovable.dev", "lovable labs"] },
+  { name: "Lovable", category: "utilities", keywords: ["lovable.dev", "lovable labs", "lovable"] },
   { name: "Wispr Flow", category: "utilities", keywords: ["wispr flow"] },
   { name: "NBA League Pass", category: "gaming", keywords: ["nba league pass"] },
   { name: "V2T Whisper", category: "utilities", keywords: ["v2t", "whisper ai transcription"] },
@@ -97,6 +97,21 @@ export const KNOWN_SERVICES: ServiceDescriptor[] = [
   { name: "Zoom", category: "utilities", keywords: ["zoom"] },
   { name: "Xbox Game Pass", category: "gaming", keywords: ["xbox game pass", "game pass"] },
   { name: "iCloud", category: "cloud", keywords: ["icloud"] },
+  { name: "Swiggy One", category: "other", keywords: ["swiggy one"] },
+  { name: "Cursor", category: "ai", keywords: ["cursor.com", "cursor pro", "anysphere"] },
+  { name: "GitHub Copilot", category: "ai", keywords: ["github copilot"] },
+  { name: "Midjourney", category: "ai", keywords: ["midjourney"] },
+  { name: "Replit", category: "utilities", keywords: ["replit"] },
+  { name: "Medium", category: "news", keywords: ["medium membership"] },
+  { name: "Tata Play Binge", category: "ott", keywords: ["tata play", "tataplay"] },
+  { name: "Google Play Pass", category: "gaming", keywords: ["google play pass"] },
+  { name: "Bumble", category: "other", keywords: ["bumble"] },
+  { name: "Tinder", category: "other", keywords: ["tinder"] },
+  { name: "Headspace", category: "fitness", keywords: ["headspace"] },
+  { name: "Calm", category: "fitness", keywords: ["calm premium"] },
+  { name: "1Password", category: "utilities", keywords: ["1password"] },
+  { name: "NordVPN", category: "utilities", keywords: ["nordvpn"] },
+  { name: "Obsidian", category: "utilities", keywords: ["obsidian sync", "obsidian publish"] },
 ];
 
 export function decodeBase64Url(data: string): string {
@@ -628,6 +643,7 @@ export function parseBankMandateEmail(
   emailDate: string
 ): DiscoveryEvidence | null {
   const lower = `${subject} ${cleanText}`.toLowerCase();
+  if (isCardBillAutopay(lower)) return null;
   const isMandate =
     lower.includes("e-mandate") ||
     lower.includes("standing instruction") ||
@@ -740,6 +756,21 @@ export function parseBankMandateEmail(
 /**
  * 4. General Inbound Parser (Direct Merchant Invoices, Transaction Alerts, Pre-Debits, Failures, Cancellations)
  */
+/**
+ * Credit-card bill payments (autopay of the statement itself) are not subscriptions.
+ * Excluding them keeps card repayments out of subscription spend.
+ */
+export function isCardBillAutopay(text: string): boolean {
+  const t = text.toLowerCase();
+  const billSignal =
+    /\b(credit card (bill|statement|payment)|card (bill|statement)|total amount due|minimum amount due|statement due|bill payment for (your )?card)\b/.test(t);
+  const autopaySignal = /\b(autopay|auto-pay|auto debit|auto-debit|standing instruction|si )\b/.test(t);
+  return billSignal && (autopaySignal || /\bcredit card\b/.test(t));
+}
+
+const REFUND_PATTERN =
+  /\b(has been refunded|have refunded|we('| ha)ve refunded|refund (has been )?(initiated|processed|issued|of)|your refund|credit note|payment reversed|reversal of)\b/i;
+
 export function parseGeneralGmailMessage(
   message: GmailMessage
 ): DiscoveryEvidence | null {
@@ -754,6 +785,33 @@ export function parseGeneralGmailMessage(
     .join("\n");
   const clean = cleanHtmlText(rawBody);
   const lower = clean.toLowerCase();
+
+  if (isCardBillAutopay(`${subject}\n${clean}`)) return null;
+
+  // Mandate revoked: changes the bank authorisation only, never the access state.
+  if (
+    /\b(e-?mandate|autopay|standing instruction|si hub)\b/.test(lower) &&
+    /\b(revoked|revocation|de-?registered|mandate (has been )?(cancelled|canceled|removed|deleted))\b/.test(lower)
+  ) {
+    const svc = KNOWN_SERVICES.find((x) => x.keywords.some((kw) => lower.includes(kw)));
+    const named = clean.match(/(?:Merchant|Biller|Payee)\s*(?:Name)?:\s*([^\n\r]+)/i)?.[1]?.trim();
+    const mandateId = clean.match(/(?:SI\s*Hub\s*ID|Mandate\s*(?:Reference|ID|No\.?)|URN):\s*([A-Za-z0-9_-]+)/i)?.[1];
+    const merchant = svc?.name ?? named ?? "E-Mandate Merchant";
+    return {
+      id: `gmail-rev-${message.id}`,
+      source: "gmail",
+      evidence_type: "mandate_revocation",
+      message_id: message.id,
+      sender,
+      subject,
+      date: parseDateToIso(emailDate),
+      currency: "INR",
+      billing_channel: "Bank E-Mandate",
+      merchant_raw: merchant,
+      mandate_id: mandateId,
+      summary: `${merchant} bank mandate revoked. This does not by itself mean the service was cancelled.`,
+    };
+  }
 
   // 1. Check Google Play
   const playEvidence = parseGooglePlayEmail(message, clean, subject, sender, emailDate);
@@ -777,7 +835,9 @@ export function parseGeneralGmailMessage(
   // 4. Classify Evidence Type
   let evidenceType: DiscoveryEvidenceType = "merchant_invoice";
 
-  if (/\b(cancelled|canceled|subscription ended|membership expired|cancellation confirmation)\b/i.test(lower)) {
+  if (REFUND_PATTERN.test(lower)) {
+    evidenceType = "refund";
+  } else if (/\b(cancelled|canceled|subscription ended|membership expired|cancellation confirmation)\b/i.test(lower)) {
     evidenceType = "cancellation_notice";
   } else if (/\b(payment failed|declined|unsuccessful payment|action required|auto-renewal failed)\b/i.test(lower)) {
     evidenceType = "payment_failure";
@@ -841,168 +901,279 @@ export function parseGeneralGmailMessage(
 // Cross-Source Consolidation & Deduplication Engine
 // ============================================================================
 
+const PAYMENT_TYPES: DiscoveryEvidenceType[] = [
+  "store_receipt",
+  "merchant_invoice",
+  "transaction_alert",
+  "screenshot_ocr",
+];
+
+function isoDay(value?: string): string | undefined {
+  if (!value) return undefined;
+  const m = /^\d{4}-\d{2}-\d{2}/.exec(value);
+  return m ? m[0] : undefined;
+}
+
+function dayDiff(a: string, b: string): number {
+  return Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
+}
+
+function channelFamilyOf(channel?: string): "google_play" | "apple" | "direct" {
+  const c = channel?.toLowerCase() ?? "";
+  if (c.includes("play")) return "google_play";
+  if (c.includes("apple")) return "apple";
+  return "direct";
+}
+
+/** Receipts, debits and forwarded copies of the same charge collapse to one payment. */
+function clusterPayments(payments: DiscoveryEvidence[]): { date?: string; amount: number }[] {
+  const clusters: { date?: string; amount: number; orderIds: Set<string> }[] = [];
+  const sorted = [...payments].sort((a, b) => (isoDay(a.date) ?? "").localeCompare(isoDay(b.date) ?? ""));
+  for (const p of sorted) {
+    const d = isoDay(p.date);
+    const amount = p.amount_rupees ?? 0;
+    const hit = clusters.find(
+      (c) =>
+        (p.order_id && c.orderIds.has(p.order_id)) ||
+        (c.amount === amount && c.date && d && dayDiff(c.date, d) <= 3)
+    );
+    if (hit) {
+      if (p.order_id) hit.orderIds.add(p.order_id);
+      if (d && (!hit.date || d > hit.date)) hit.date = d;
+    } else {
+      clusters.push({ date: d, amount, orderIds: new Set(p.order_id ? [p.order_id] : []) });
+    }
+  }
+  return clusters.map((c) => ({ date: c.date, amount: c.amount }));
+}
+
+interface EvidenceGroup {
+  service: string;
+  account: string;
+  family: "google_play" | "apple" | "direct";
+  evidence: DiscoveryEvidence[];
+}
+
 /**
- * Consolidates multiple discovery evidence items (receipts, mandates, debits, cancellations)
- * into unified, deduped subscription candidates with attached evidence history.
+ * Consolidates discovery evidence into deduped subscription candidates.
+ *
+ * Reasoning is chronological and keeps three things apart:
+ *  - access (can the person use it now),
+ *  - renewal (will it charge again: cancelled, failing, renewing),
+ *  - mandate (bank authorisation, which is neither of the above).
+ * Unknown price is never zero. Refunds never create subscriptions.
  */
 export function consolidateEvidenceToCandidates(
   evidenceList: DiscoveryEvidence[],
-  existingSubscriptions: Subscription[] = []
+  existingSubscriptions: Subscription[] = [],
+  asOf: Date = new Date()
 ): ConsolidatedSubscriptionCandidate[] {
-  const candidateMap = new Map<string, ConsolidatedSubscriptionCandidate>();
+  const today = asOf.toISOString().slice(0, 10);
+  const groups: EvidenceGroup[] = [];
+  const serviceOf = (ev: DiscoveryEvidence) => normalizeServiceName(ev.merchant_raw || ev.summary);
+  const accountOf = (ev: DiscoveryEvidence) => (ev.account_ref ?? "").trim().toLowerCase();
 
-  for (const ev of evidenceList) {
-    const normService = normalizeServiceName(ev.merchant_raw || ev.summary);
-    // Keep distinct store/direct subscriptions separate, but merge a bank
-    // mandate into a matching store receipt for the same known service.
-    const channelFamily = ev.billing_channel?.toLowerCase().includes("play")
-      ? "google_play"
-      : ev.billing_channel?.toLowerCase().includes("apple")
-        ? "apple"
-        : "direct";
+  // Pass 1: evidence that names a store channel or is itself a receipt/invoice opens groups.
+  // Pass 2: everything else attaches to the matching service/account group.
+  const opensGroup = (ev: DiscoveryEvidence) =>
+    ev.evidence_type === "store_receipt" ||
+    ev.evidence_type === "merchant_invoice" ||
+    (ev.billing_channel && channelFamilyOf(ev.billing_channel) !== "direct");
 
-    const exactKey = `${normService.toLowerCase()}_${channelFamily}`;
-    const matchingCrossChannelKey = Array.from(candidateMap.entries()).find(
-      ([, candidate]) =>
-        candidate.service_name.toLowerCase() === normService.toLowerCase() &&
-        ((ev.evidence_type === "mandate_registration" &&
-          candidate.evidence.some((evidence) => evidence.evidence_type === "store_receipt")) ||
-          (ev.evidence_type === "store_receipt" &&
-            candidate.evidence.some((evidence) => evidence.evidence_type === "mandate_registration") &&
-            !candidate.evidence.some((evidence) => evidence.evidence_type === "store_receipt")))
-    )?.[0];
-    const key = matchingCrossChannelKey ?? exactKey;
+  const place = (ev: DiscoveryEvidence, open: boolean) => {
+    const service = serviceOf(ev);
+    const account = accountOf(ev);
+    const family = channelFamilyOf(ev.billing_channel);
+    const same = groups.filter((g) => g.service === service && g.account === account);
+    let target = open ? same.find((g) => g.family === family) : undefined;
+    if (!target && !open) {
+      target =
+        same.find((g) => g.family === family && family !== "direct") ??
+        (same.length === 1 ? same[0] : same.find((g) => g.family === "direct"));
+    }
+    if (!target) {
+      target = { service, account, family: open ? family : "direct", evidence: [] };
+      groups.push(target);
+    }
+    target.evidence.push(ev);
+  };
+  evidenceList.filter(opensGroup).forEach((ev) => place(ev, true));
+  evidenceList.filter((ev) => !opensGroup(ev)).forEach((ev) => place(ev, false));
 
-    if (!candidateMap.has(key)) {
-      const cycle: BillingCycle | "unknown" =
-        (ev.frequency_raw as BillingCycle | undefined) || "unknown";
-      let status: CandidateSubscriptionStatus = "needs_confirmation";
+  const results: ConsolidatedSubscriptionCandidate[] = [];
+  let seq = 0;
 
-      if (ev.evidence_type === "store_receipt") {
-        status = "likely_active";
-      } else if (ev.evidence_type === "cancellation_notice") {
-        status = "cancelled_or_expired";
-      } else if (ev.evidence_type === "payment_failure") {
-        status = "payment_failed";
+  for (const group of groups) {
+    const evs = [...group.evidence].sort((a, b) =>
+      (isoDay(a.date) ?? "").localeCompare(isoDay(b.date) ?? "")
+    );
+    // A group made only of refunds is not a subscription.
+    if (evs.every((e) => e.evidence_type === "refund")) continue;
+
+    const payments = evs.filter((e) => PAYMENT_TYPES.includes(e.evidence_type) && (e.amount_rupees ?? 0) > 0);
+    const clusters = clusterPayments(payments);
+    const lastPayment = clusters.filter((c) => c.date).sort((a, b) => a.date!.localeCompare(b.date!)).pop();
+
+    const cycleEvidence = [...evs].reverse().find((e) => e.frequency_raw && e.frequency_raw !== "unknown");
+    const cycle: BillingCycle | "unknown" = (cycleEvidence?.frequency_raw as BillingCycle | undefined) ?? "unknown";
+
+    // Access periods come from payments and from service events that state a period.
+    const periodStarts: string[] = [];
+    for (const c of clusters) if (c.date) periodStarts.push(c.date);
+    for (const e of evs) {
+      if (e.evidence_type === "service_event" && e.frequency_raw && e.frequency_raw !== "unknown" && isoDay(e.date)) {
+        periodStarts.push(isoDay(e.date)!);
       }
+    }
+    const latestStart = periodStarts.sort().pop();
+    const accessEnd = latestStart && cycle !== "unknown" ? addCycleToDate(latestStart, cycle) : undefined;
 
-      // Check renewal date
-      let renewalDate = ev.renewal_date;
-      let renewalInferred = false;
-      if (!renewalDate && ev.date && cycle !== "unknown") {
-        renewalDate = addCycleToDate(ev.date, cycle);
-        renewalInferred = true;
-      }
+    const lastDay = (types: DiscoveryEvidenceType[]) =>
+      evs.filter((e) => types.includes(e.evidence_type)).map((e) => isoDay(e.date) ?? "").sort().pop();
+    const cancelledOn = lastDay(["cancellation_notice"]);
+    const failedOn = lastDay(["payment_failure"]);
+    const registeredOn = lastDay(["mandate_registration"]);
+    const revokedOn = lastDay(["mandate_revocation"]);
 
-      const needsReview: string[] = [];
-      if (cycle === "unknown") {
-        needsReview.push("Billing cycle is unknown and needs confirmation");
-      }
-      if (!ev.amount_rupees) {
-        needsReview.push("Price is unknown; confirm the current amount before saving");
-      }
-      if (ev.evidence_type === "mandate_registration") {
-        needsReview.push("Mandate registered; confirm if service is currently active");
-        if (ev.max_amount_rupees && ev.amount_rupees && ev.max_amount_rupees > ev.amount_rupees) {
-          needsReview.push(`Mandate maximum cap is ₹${ev.max_amount_rupees}, recurring amount is ₹${ev.amount_rupees}`);
-        }
-      }
+    const reactivated = Boolean(cancelledOn && lastPayment?.date && lastPayment.date > cancelledOn);
+    const isCancelled = Boolean(cancelledOn) && !reactivated;
+    const failureStands = Boolean(failedOn) && (!lastPayment?.date || failedOn! > lastPayment.date);
 
-      candidateMap.set(key, {
-        id: `cand-${normService.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${Date.now()}`,
-        service_name: normService,
-        plan_name: ev.plan_name || (ev.merchant_raw !== normService ? ev.merchant_raw : undefined),
-        category: inferCategory(normService, ev.summary),
-        amount_rupees: ev.amount_rupees,
-        currency: "INR",
-        billing_cycle: cycle,
-        billing_channel: ev.billing_channel || "Email receipt",
-        status,
-        renewal_date: renewalDate,
-        renewal_date_inferred: renewalInferred,
-        charge_date: ev.date,
-        mandate_details: ev.mandate_id || ev.max_amount_rupees ? {
-          mandate_id: ev.mandate_id,
-          max_amount_rupees: ev.max_amount_rupees,
-          frequency: ev.frequency_raw,
-          card_last4: ev.last4,
-        } : undefined,
-        confidence:
-          ev.evidence_type === "store_receipt"
-            ? 0.95
-            : ev.evidence_type === "service_event"
-              ? 0.7
-              : 0.85,
-        needs_review_reasons: needsReview,
-        evidence: [ev],
-      });
-    } else {
-      // Merge with existing candidate
-      const cand = candidateMap.get(key)!;
-      cand.evidence.push(ev);
+    let mandate: "none" | "registered" | "revoked" = "none";
+    if (registeredOn || revokedOn) {
+      mandate = revokedOn && (!registeredOn || revokedOn >= registeredOn) ? "revoked" : "registered";
+    }
 
-      if (
-        (ev.evidence_type === "mandate_registration" &&
-          cand.evidence.some((evidence) => evidence.evidence_type === "store_receipt")) ||
-        (ev.evidence_type === "store_receipt" &&
-          cand.evidence.some((evidence) => evidence.evidence_type === "mandate_registration"))
-      ) {
-        const duplicateNote = "Bank mandate may be payment evidence for this app-store subscription; review both sources together";
-        if (!cand.needs_review_reasons.includes(duplicateNote)) {
-          cand.needs_review_reasons.push(duplicateNote);
-        }
-      }
+    let access: "active" | "active_until_period_end" | "ended" | "unknown" = "unknown";
+    if (accessEnd) {
+      access = accessEnd >= today ? (isCancelled ? "active_until_period_end" : "active") : "ended";
+    } else if (isCancelled) {
+      access = "unknown";
+    } else if (evs.some((e) => e.evidence_type === "store_receipt")) {
+      access = "active";
+    }
 
-      if (!cand.plan_name && ev.plan_name) {
-        cand.plan_name = ev.plan_name;
-      }
+    const renewal: "renewing" | "cancelled" | "payment_failed" | "unknown" = isCancelled
+      ? "cancelled"
+      : failureStands
+        ? "payment_failed"
+        : lastPayment && (cycle !== "unknown" || mandate === "registered")
+          ? "renewing"
+          : "unknown";
 
-      // Upgrade amount if candidate had 0 or was undefined
-      if (
-        (!cand.amount_rupees || cand.amount_rupees <= 0) &&
-        ev.amount_rupees &&
-        ev.amount_rupees > 0
-      ) {
-        cand.amount_rupees = ev.amount_rupees;
-      }
+    let status: CandidateSubscriptionStatus = "needs_confirmation";
+    if (failureStands) status = "payment_failed";
+    else if (access === "ended" || (isCancelled && access === "unknown")) status = "cancelled_or_expired";
+    else if (access === "active" || access === "active_until_period_end") status = "likely_active";
 
-      // Upgrade billing cycle if candidate was unknown
-      if (cand.billing_cycle === "unknown" && ev.frequency_raw && ev.frequency_raw !== "unknown") {
-        cand.billing_cycle = ev.frequency_raw as BillingCycle;
-        if (!ev.renewal_date && cand.charge_date) {
-          cand.renewal_date = addCycleToDate(cand.charge_date, cand.billing_cycle);
-          cand.renewal_date_inferred = true;
-        }
-        cand.needs_review_reasons = cand.needs_review_reasons.filter(
-          (r) => !r.includes("Billing cycle is unknown")
-        );
-      }
+    const explicitRenewal = [...evs].reverse().find((e) => e.renewal_date)?.renewal_date;
+    let renewalDate = explicitRenewal;
+    let renewalInferred = false;
+    if (!renewalDate && accessEnd && !isCancelled) {
+      renewalDate = accessEnd;
+      renewalInferred = true;
+    }
 
-      if (ev.renewal_date) {
-        cand.renewal_date = ev.renewal_date;
-        cand.renewal_date_inferred = false;
+    const first = evs[0];
+    const normService = group.service;
+    const amount = lastPayment?.amount || evs.find((e) => (e.amount_rupees ?? 0) > 0 && e.evidence_type !== "refund")?.amount_rupees;
+    const priceKnown = Boolean(amount && amount > 0);
+    const needsReview: string[] = [];
+    if (cycle === "unknown") needsReview.push("Billing cycle is unknown and needs confirmation");
+    if (!priceKnown) needsReview.push("Price is unknown; confirm the current amount before saving");
+    if (mandate === "registered") {
+      needsReview.push("Mandate registered; confirm if service is currently active");
+      const cap = evs.find((e) => e.max_amount_rupees)?.max_amount_rupees;
+      if (cap && amount && cap > amount) {
+        needsReview.push(`Mandate maximum cap is ₹${cap}, recurring amount is ₹${amount}`);
       }
+    }
+    if (mandate === "revoked") {
+      needsReview.push("Bank mandate was revoked. That stops bank debits, not necessarily the service; check the merchant account");
+    }
+    if (evs.some((e) => e.evidence_type === "store_receipt") && evs.some((e) => e.evidence_type === "mandate_registration")) {
+      needsReview.push("Bank mandate may be payment evidence for this app-store subscription; review both sources together");
+    }
+    if (isCancelled) {
+      needsReview.push(
+        accessEnd && accessEnd >= today
+          ? `Cancellation notice received; access likely ends ${accessEnd}`
+          : "Cancellation notice received"
+      );
+    }
+    if (failureStands) needsReview.push("Latest payment failed and no later successful payment was found");
+    if (access === "ended" && !isCancelled && accessEnd) {
+      needsReview.push(`Last known paid period ended ${accessEnd} and no later renewal was seen`);
+    }
+    if (evs.some((e) => e.evidence_type === "refund")) {
+      needsReview.push("A refund or credit note was seen; confirm the subscription is still wanted");
+    }
+    if (clusters.length > 1) needsReview.push(`${clusters.length} separate payments found`);
 
-      // If a cancellation notice arrives, update status
-      if (ev.evidence_type === "cancellation_notice") {
-        cand.status = "cancelled_or_expired";
-        cand.needs_review_reasons.push("Cancellation notice received");
-      }
+    const mandateEvidence = evs.filter((e) => e.mandate_id || e.max_amount_rupees);
+    const lastMandate = mandateEvidence[mandateEvidence.length - 1];
+    const bestType = evs.some((e) => e.evidence_type === "store_receipt")
+      ? 0.95
+      : evs.every((e) => e.evidence_type === "service_event")
+        ? 0.7
+        : 0.85;
 
-      // Attach mandate details if present
-      if (ev.mandate_id || ev.max_amount_rupees) {
-        cand.mandate_details = {
-          mandate_id: ev.mandate_id || cand.mandate_details?.mandate_id,
-          max_amount_rupees: ev.max_amount_rupees || cand.mandate_details?.max_amount_rupees,
-          frequency: ev.frequency_raw || cand.mandate_details?.frequency,
-          card_last4: ev.last4 || cand.mandate_details?.card_last4,
-        };
-      }
+    results.push({
+      id: `cand-${normService.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${Date.now()}-${seq++}`,
+      service_name: normService,
+      plan_name:
+        evs.find((e) => e.plan_name)?.plan_name ||
+        (first.merchant_raw && first.merchant_raw !== normService ? first.merchant_raw : undefined),
+      category: inferCategory(normService, first.summary),
+      amount_rupees: priceKnown ? amount : undefined,
+      price_known: priceKnown,
+      currency: "INR",
+      billing_cycle: cycle,
+      billing_channel:
+        group.family === "google_play"
+          ? evs.find((e) => channelFamilyOf(e.billing_channel) === "google_play")?.billing_channel || "Google Play"
+          : group.family === "apple"
+            ? evs.find((e) => channelFamilyOf(e.billing_channel) === "apple")?.billing_channel || "Apple"
+            : evs.find((e) => e.billing_channel)?.billing_channel || "Email receipt",
+      status,
+      access_state: access,
+      renewal_state: renewal,
+      mandate_state: mandate,
+      access_end_date: accessEnd,
+      payment_count: clusters.length,
+      renewal_date: renewalDate,
+      renewal_date_inferred: renewalDate ? renewalInferred : undefined,
+      charge_date: lastPayment?.date ?? isoDay(first.date) ?? first.date,
+      mandate_details: lastMandate
+        ? {
+            mandate_id: lastMandate.mandate_id,
+            max_amount_rupees: lastMandate.max_amount_rupees,
+            frequency: lastMandate.frequency_raw,
+            card_last4: lastMandate.last4,
+          }
+        : undefined,
+      confidence: bestType,
+      needs_review_reasons: needsReview,
+      evidence: evs,
+    });
+  }
+
+  // The same service seen on several channels or accounts is not assumed to be several plans.
+  const byService = new Map<string, ConsolidatedSubscriptionCandidate[]>();
+  for (const cand of results) {
+    byService.set(cand.service_name, [...(byService.get(cand.service_name) ?? []), cand]);
+  }
+  for (const list of byService.values()) {
+    if (list.length < 2) continue;
+    for (const cand of list) {
+      const others = list.filter((o) => o !== cand).map((o) => o.billing_channel).join(", ");
+      cand.needs_review_reasons.push(
+        `Also seen via another billing channel or account (${others}); confirm whether these are separate plans`
+      );
     }
   }
 
   // Cross-reference with existing subscriptions in the household
-  const results = Array.from(candidateMap.values());
   for (const cand of results) {
     const matchedExisting = existingSubscriptions.filter(
       (sub) =>
@@ -1555,6 +1726,20 @@ export async function searchGmailMultiLane(
 // ============================================================================
 
 export const SAMPLE_DISCOVERY_EVIDENCE: DiscoveryEvidence[] = [
+  // 0. UPI debit with no stated interval: needs a quick price/interval confirmation
+  {
+    id: "demo-ev-0",
+    source: "gmail",
+    evidence_type: "service_event",
+    message_id: "demo-msg-perplexity",
+    sender: "Perplexity <team@mail.perplexity.example>",
+    subject: "You've upgraded to Perplexity Pro",
+    date: "2026-10-06",
+    currency: "INR",
+    billing_channel: "UPI",
+    merchant_raw: "Perplexity",
+    summary: "Perplexity Pro upgrade confirmation. No price or billing interval stated.",
+  },
   // 1. Google Play Todoist
   {
     id: "demo-ev-1",

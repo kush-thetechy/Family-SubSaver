@@ -135,6 +135,8 @@ export type DiscoveryEvidenceType =
   | "payment_failure"
   | "cancellation_notice"
   | "service_event"
+  | "mandate_revocation"
+  | "refund"
   | "screenshot_ocr";
 
 export interface DiscoveryEvidence {
@@ -156,6 +158,8 @@ export interface DiscoveryEvidence {
   max_amount_rupees?: number;
   order_id?: string;
   last4?: string;
+  /** Account the evidence belongs to (email, username, workspace). Never merge accounts by name alone. */
+  account_ref?: string;
   summary: string;
 }
 
@@ -165,7 +169,22 @@ export type CandidateSubscriptionStatus =
   | "cancelled_or_expired"
   | "payment_failed";
 
+/** Whether the person can use the service now. Separate from whether it will renew. */
+export type AccessState = "active" | "active_until_period_end" | "ended" | "unknown";
+/** Whether the next renewal is expected. Separate from access. */
+export type RenewalState = "renewing" | "cancelled" | "payment_failed" | "unknown";
+export type MandateState = "none" | "registered" | "revoked";
+
 export interface ConsolidatedSubscriptionCandidate {
+  access_state?: AccessState;
+  renewal_state?: RenewalState;
+  mandate_state?: MandateState;
+  /** Last day of paid access when known or inferred from a payment and billing cycle. */
+  access_end_date?: string;
+  /** Distinct payments after merging duplicate receipts, debits and forwarded copies. */
+  payment_count?: number;
+  /** false when no price was ever found. Unknown is never zero. */
+  price_known?: boolean;
   id: string;
   service_name: string;
   plan_name?: string;
