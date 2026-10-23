@@ -281,3 +281,21 @@ grant execute on function
   public.household_roster(uuid),
   public.household_shared_subscriptions(uuid)
   to authenticated;
+
+-- Households the caller has joined as a member (so they can see who they share with and leave).
+create function public.my_linked_households()
+returns table (household_id uuid, household_name text, owner_name text, joined_at timestamptz)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select m.household_id, h.name, p.name, m.joined_at
+    from public.household_members m
+    join public.households h on h.id = m.household_id
+    join public.profiles p on p.id = h.created_by
+   where m.user_id = (select auth.uid()) and m.role = 'member' and m.status = 'active'
+$$;
+
+revoke all on function public.my_linked_households() from public, anon;
+grant execute on function public.my_linked_households() to authenticated;

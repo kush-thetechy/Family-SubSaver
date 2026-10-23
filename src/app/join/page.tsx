@@ -43,7 +43,15 @@ export default function JoinPage() {
     if (!token || !authUser) return;
     previewInvite(token)
       .then(setInfo)
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => {
+        setError(e.message);
+        // A dead link must not keep redirecting this person here.
+        try {
+          localStorage.removeItem(PENDING_JOIN_KEY);
+        } catch {
+          /* ignore */
+        }
+      });
   }, [token, authUser]);
 
   if (!FAMILY_LINK_ENABLED) {
