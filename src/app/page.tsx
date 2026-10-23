@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useApp } from "@/context/AppContext";
-import { formatINR, calculateMonthlyPaise } from "@/lib/calculations";
+import { formatINR, calculateMonthlyPaise, PRIVATE_PAYER_KEY } from "@/lib/calculations";
 import {
   CreditCard,
   AlertTriangle,
@@ -18,6 +18,14 @@ import {
   FileUp,
 } from "lucide-react";
 
+// Whole calendar days from `now` (local date) to a YYYY-MM-DD renewal date.
+function daysUntil(renewal: string, now: Date): number {
+  const [y, m, d] = renewal.split("-").map(Number);
+  const target = Date.UTC(y, m - 1, d);
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target - today) / 86400000);
+}
+
 export default function DashboardPage() {
   const {
     currentProfile,
@@ -27,13 +35,17 @@ export default function DashboardPage() {
     recommendations,
     auditProgress,
     members,
+    isDemoMode,
   } = useApp();
 
   // Find upcoming renewals in next 30 days
-  const now = new Date("2026-10-15"); // Reference app date
+  // Demo data is anchored to a fixed reference date; real accounts use today.
+  const now = isDemoMode ? new Date("2026-10-15") : new Date();
   const upcomingRenewals = subscriptions
     .filter((s) => {
       if (!s.is_active || !s.renewal_date) return false;
+      // Totals-only rows of other people contribute to totals only: no renewal details.
+      if (s.payer_id !== currentProfile.id && s.visibility === "totals_only") return false;
       // A family-wide view excludes all hidden records and redacts totals-only records.
       if (
         (isFamilyView && s.visibility !== "full_details") ||
@@ -43,17 +55,11 @@ export default function DashboardPage() {
       ) {
         return false;
       }
-      const rDate = new Date(s.renewal_date);
-      const diffDays = Math.ceil(
-        (rDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-      );
+      const diffDays = daysUntil(s.renewal_date!, now);
       return diffDays >= 0 && diffDays <= 30;
     })
     .map((s) => {
-      const rDate = new Date(s.renewal_date!);
-      const diffDays = Math.ceil(
-        (rDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-      );
+      const diffDays = daysUntil(s.renewal_date!, now);
       const payer = members.find((m) => m.user_id === s.payer_id);
       return {
         ...s,
@@ -276,7 +282,7 @@ export default function DashboardPage() {
                       {sub.service_name}
                     </span>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
-                      Paid by {sub.payerName} • {sub.billing_channel || "Direct"}
+                      Paid by {sub.payerName}{sub.billing_channel ? ` • ${sub.billing_channel}` : ""}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -439,7 +445,7 @@ export default function DashboardPage() {
                   <div key={payerId} className="space-y-1">
                     <div className="flex justify-between text-xs font-medium">
                       <span className="text-slate-700 dark:text-slate-300">
-                        {member?.name || "Unknown Member"}
+                        {payerId === PRIVATE_PAYER_KEY ? "Private (other members)" : member?.name || "Unknown Member"}
                       </span>
                       <span className="text-slate-900 dark:text-white font-bold">
                         {formatINR(paise)}/mo ({percent}%)

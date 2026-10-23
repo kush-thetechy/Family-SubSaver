@@ -27,7 +27,13 @@ export function generateSavingsRecommendations(
 
   for (const sub of activeSubs) {
     // If viewer is specified, don't include hidden subscriptions of others
-    if (viewerId && sub.payer_id !== viewerId && sub.visibility === "hidden") {
+    // Totals-only rows of others only contribute to totals; their service is not shared,
+    // so they must not feed named recommendations.
+    if (
+      viewerId &&
+      sub.payer_id !== viewerId &&
+      (sub.visibility === "hidden" || sub.visibility === "totals_only")
+    ) {
       continue;
     }
 

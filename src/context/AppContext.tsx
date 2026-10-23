@@ -49,7 +49,7 @@ interface AppContextType {
   switchActiveProfile: (userId: string) => void;
   addSubscription: (
     sub: Omit<Subscription, "id" | "created_at" | "updated_at">
-  ) => Promise<void>;
+  ) => Promise<string>;
   updateSubscription: (
     id: string,
     updates: Partial<Subscription>
@@ -254,7 +254,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             }
           }
           const shared = (sharedRes.data ?? []) as {
-            id: string; payer_id: string; service_name: string; plan_name: string | null;
+            id: string; payer_id: string | null; service_name: string; plan_name: string | null;
             category: Subscription["category"]; billing_cycle: Subscription["billing_cycle"];
             amount_paise: number | string; renewal_date: string | null; is_active: boolean;
             visibility: Subscription["visibility"];
@@ -270,8 +270,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               category: x.category,
               billing_cycle: x.billing_cycle,
               amount_paise: Number(x.amount_paise),
-              payer_id: x.payer_id,
-              user_ids: [x.payer_id],
+              payer_id: x.payer_id ?? "",
+              user_ids: x.payer_id ? [x.payer_id] : [],
               renewal_date: x.renewal_date ?? undefined,
               is_active: x.is_active,
               visibility: x.visibility,
@@ -368,7 +368,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updated_at: new Date().toISOString(),
       };
       setSubscriptions((previous) => [newSub, ...previous]);
-      return;
+      return newSub.id;
     }
 
     const supabase = getSupabaseBrowserClient();
@@ -387,6 +387,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .single();
     if (error) throw error;
     setSubscriptions((previous) => [data as Subscription, ...previous]);
+    return (data as Subscription).id;
   };
 
   const updateSubscription = async (
@@ -496,12 +497,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       viewer: isFamilyView ? "Whole family" : currentProfile.name,
       household,
       members,
-      subscriptions: subscriptions.filter((sub) => {
-        if (isFamilyView) return sub.visibility === "full_details";
-        return (
-          sub.payer_id === currentProfile.id || sub.visibility !== "hidden"
-        );
-      }),
+      subscriptions: subscriptions
+        .filter((sub) => {
+          if (sub.payer_id === currentProfile.id) return true;
+          if (isFamilyView) return sub.visibility === "full_details";
+          return sub.visibility !== "hidden";
+        })
+        .map((sub) =>
+          sub.payer_id !== currentProfile.id && sub.visibility === "totals_only"
+            ? {
+                id: sub.id,
+                service_name: "Private subscription",
+                category: "other",
+                billing_cycle: sub.billing_cycle,
+                amount_paise: sub.amount_paise,
+                is_active: sub.is_active,
+                visibility: sub.visibility,
+              }
+            : sub
+        ),
     };
     return JSON.stringify(exportPayload, null, 2);
   };
@@ -565,13 +579,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
     : generateSavingsRecommendations(subscriptions, currentProfile.id);
 
-  const visibleSubs = subscriptions.filter((sub) => {
-    if (isFamilyView) return sub.visibility !== "hidden";
-    if (sub.payer_id !== currentProfile.id && sub.visibility === "hidden") {
-      return false;
-    }
-    return true;
-  });
+  // The audit scores the viewer's own inventory. Rows other members share are
+  // metadata-only (no channel, no renewal for totals-only) and must not lower it.
+  const visibleSubs = subscriptions.filter(
+    (sub) => sub.payer_id === currentProfile.id
+  );
   const missingPayerCount = visibleSubs.filter((sub) => !sub.payer_id).length;
   const missingUsersCount = visibleSubs.filter(
     (sub) => !sub.user_ids || sub.user_ids.length === 0

@@ -102,6 +102,8 @@ export interface SpendingSummary {
  *    - `totals_only`: included in aggregate totals and aggregate payer spend, but details are redacted.
  *    - `hidden`: completely EXCLUDED from group-visible totals to prevent inference leaks!
  */
+export const PRIVATE_PAYER_KEY = "__private__";
+
 export function calculateHouseholdSummary(
   subscriptions: Subscription[],
   viewerId?: string
@@ -144,7 +146,9 @@ export function calculateHouseholdSummary(
       categoryBreakdown[categoryKey] = (categoryBreakdown[categoryKey] || 0) + monthly;
 
       // Payer breakdown
-      payerBreakdown[sub.payer_id] = (payerBreakdown[sub.payer_id] || 0) + monthly;
+      // Totals-only rows of others do not reveal who pays.
+      const payerKey = sub.visibility === "totals_only" && !isOwn ? PRIVATE_PAYER_KEY : sub.payer_id;
+      payerBreakdown[payerKey] = (payerBreakdown[payerKey] || 0) + monthly;
     }
   }
 
