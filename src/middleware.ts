@@ -9,6 +9,9 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE === "true";
   const isLoginPage = request.nextUrl.pathname === "/login";
   const isAuthCallback = request.nextUrl.pathname === "/auth/callback";
+  const isJoinPage =
+    process.env.NEXT_PUBLIC_ENABLE_FAMILY_LINK === "true" &&
+    request.nextUrl.pathname === "/join";
   const isApiRequest = request.nextUrl.pathname.startsWith("/api/");
 
   if (
@@ -53,7 +56,7 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user && !isLoginPage && !isAuthCallback) {
+  if (!user && !isLoginPage && !isAuthCallback && !isJoinPage) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";

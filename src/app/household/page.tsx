@@ -2,6 +2,8 @@
 
 import React, { useState } from "react";
 import { useApp } from "@/context/AppContext";
+import { FamilyLinkPanel } from "@/components/FamilyLinkPanel";
+import { FAMILY_LINK_ENABLED } from "@/lib/family-link";
 import { MemberRole } from "@/types";
 import {
   Users,
@@ -77,7 +79,9 @@ export default function HouseholdPage() {
         )}
       </div>
 
-      {!isDemoMode && (
+      {!isDemoMode && FAMILY_LINK_ENABLED && <FamilyLinkPanel />}
+
+      {!isDemoMode && !FAMILY_LINK_ENABLED && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
           Family invitations and shared household access are not enabled yet.
           Your account currently has a private household.
@@ -103,7 +107,7 @@ export default function HouseholdPage() {
                 <strong>Totals Only:</strong> Included in aggregated household math, but service title and details are redacted for other members.
               </li>
               <li>
-                <strong>Hidden:</strong> Completely confidential to the paying member; mathematically isolated from group totals to prevent inference leaks.
+                <strong>Hidden:</strong> Never shown to other members and not included in what they see of household totals.
               </li>
             </ul>
           </div>

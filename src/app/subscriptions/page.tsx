@@ -40,6 +40,7 @@ function SubscriptionsContent() {
     currentProfile,
     household,
     isFamilyView,
+    isDemoMode,
     members,
     addSubscription,
     updateSubscription,
@@ -271,6 +272,7 @@ function SubscriptionsContent() {
     subscriptions,
     currentProfile.id,
     isFamilyView,
+    isDemoMode,
     searchQuery,
     selectedCategory,
     selectedPayer,
@@ -469,6 +471,7 @@ function SubscriptionsContent() {
               </div>
 
               {/* Action Buttons */}
+              {(isDemoMode || isOwn) && !sub.isRedacted && (
               <div className="mt-5 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
                 <button
                   onClick={() => openEditModal(sub)}
@@ -487,6 +490,7 @@ function SubscriptionsContent() {
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
+              )}
             </div>
           );
         })}

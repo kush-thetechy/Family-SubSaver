@@ -21,6 +21,7 @@ import {
   SpendingSummary,
 } from "@/lib/calculations";
 import { generateSavingsRecommendations } from "@/lib/recommendations";
+import { FAMILY_LINK_ENABLED } from "@/lib/family-link";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase";
 
 interface AuditProgress {
@@ -179,6 +180,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           .select("*")
           .eq("user_id", user.id)
           .eq("status", "active")
+          .eq("role", "owner")
           .maybeSingle();
         if (memberError) throw memberError;
         if (!memberRow) {
@@ -221,9 +223,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             };
         setCurrentProfile(profile);
         setAllProfiles([profile]);
+        let loadedMembers: HouseholdMember[] = [memberRow as HouseholdMember];
+        let loadedSubs = (subscriptionRows ?? []) as Subscription[];
+        const loadedProfiles: Profile[] = [profile];
+
+        if (FAMILY_LINK_ENABLED) {
+          // Linked family members: consent-scoped roster and metadata-only shared rows.
+          const [rosterRes, sharedRes] = await Promise.all([
+            supabase.rpc("household_roster", { h: householdRow.id }),
+            supabase.rpc("household_shared_subscriptions", { h: householdRow.id }),
+          ]);
+          if (rosterRes.error) throw rosterRes.error;
+          if (sharedRes.error) throw sharedRes.error;
+          const roster = (rosterRes.data ?? []) as {
+            user_id: string; name: string; role: MemberRole; joined_at: string;
+          }[];
+          loadedMembers = roster.map((r) => ({
+            id: `${householdRow.id}:${r.user_id}`,
+            household_id: householdRow.id,
+            user_id: r.user_id,
+            role: r.role,
+            name: r.name,
+            email: r.user_id === user.id ? profile.email : "",
+            joined_at: r.joined_at,
+            status: "active" as const,
+          }));
+          for (const r of roster) {
+            if (r.user_id !== user.id) {
+              loadedProfiles.push({ id: r.user_id, name: r.name, email: "", created_at: r.joined_at });
+            }
+          }
+          const shared = (sharedRes.data ?? []) as {
+            id: string; payer_id: string; service_name: string; plan_name: string | null;
+            category: Subscription["category"]; billing_cycle: Subscription["billing_cycle"];
+            amount_paise: number | string; renewal_date: string | null; is_active: boolean;
+            visibility: Subscription["visibility"];
+          }[];
+          const mine = new Set(loadedSubs.map((x) => x.id));
+          const others: Subscription[] = shared
+            .filter((x) => !mine.has(x.id) && x.payer_id !== user.id)
+            .map((x) => ({
+              id: x.id,
+              household_id: householdRow.id,
+              service_name: x.service_name,
+              plan_name: x.plan_name ?? undefined,
+              category: x.category,
+              billing_cycle: x.billing_cycle,
+              amount_paise: Number(x.amount_paise),
+              payer_id: x.payer_id,
+              user_ids: [x.payer_id],
+              renewal_date: x.renewal_date ?? undefined,
+              is_active: x.is_active,
+              visibility: x.visibility,
+              source: "import" as const,
+              created_at: "",
+              updated_at: "",
+            }));
+          loadedSubs = [...loadedSubs, ...others];
+        }
+
+        setAllProfiles(loadedProfiles);
         setHousehold(householdRow as Household);
-        setMembers([memberRow as HouseholdMember]);
-        setSubscriptions((subscriptionRows ?? []) as Subscription[]);
+        setMembers(loadedMembers);
+        setSubscriptions(loadedSubs);
       } catch (error) {
         if (!isActive || revision !== loadRevision) return;
         setAccountError(
