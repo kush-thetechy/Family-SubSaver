@@ -77,8 +77,20 @@ describe("family link flow", () => {
     const r = await call(OWNER, "select * from public.household_shared_subscriptions($1)", [ownerHh]);
     const names = r.rows.map((x: any) => x.service_name).sort();
     expect(names).toEqual(["MemberSpotify", "OwnerNetflix"]);
-    expect(Object.keys(r.rows[0])).not.toContain("notes");
-    expect(Object.keys(r.rows[0])).not.toContain("billing_channel");
+    expect(Object.keys(r.rows[0] as object)).not.toContain("notes");
+    expect(Object.keys(r.rows[0] as object)).not.toContain("billing_channel");
+  });
+
+  it("totals_only rows are redacted to amount and category", async () => {
+    await addSub(MEMBER, memberHh, "SecretStreaming", "'totals_only'");
+    const r = await call(OWNER, "select * from public.household_shared_subscriptions($1)", [ownerHh]);
+    const names = r.rows.map((x: any) => x.service_name);
+    expect(names).not.toContain("SecretStreaming");
+    expect(names).toContain("Private subscription");
+    const row = r.rows.find((x: any) => x.service_name === "Private subscription") as any;
+    expect(row.plan_name).toBeNull();
+    expect(Number(row.amount_paise)).toBe(19900);
+    await db.query("delete from public.subscriptions where service_name='SecretStreaming'");
   });
 
   it("owner cannot read member's raw rows, and cannot see unrelated users", async () => {
