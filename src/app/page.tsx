@@ -160,7 +160,7 @@ export default function DashboardPage() {
             </div>
             <div className="text-lg sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               {formatINR(summary.monthlyRecurringPaise)}
-              <span className="text-xs font-normal text-slate-500 dark:text-slate-400 ml-1">
+              <span className="block min-[420px]:inline text-xs font-normal text-slate-500 dark:text-slate-400 min-[420px]:ml-1">
                 /mo
               </span>
             </div>
@@ -183,7 +183,7 @@ export default function DashboardPage() {
             </div>
             <div className="text-lg sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               {formatINR(summary.annualizedRecurringPaise)}
-              <span className="text-xs font-normal text-slate-500 dark:text-slate-400 ml-1">
+              <span className="block min-[420px]:inline text-xs font-normal text-slate-500 dark:text-slate-400 min-[420px]:ml-1">
                 /yr
               </span>
             </div>
@@ -235,7 +235,7 @@ export default function DashboardPage() {
               {totalPotentialMonthlySavingsPaise > 0
                 ? formatINR(totalPotentialMonthlySavingsPaise)
                 : "₹0"}
-              <span className="text-xs font-normal text-slate-500 dark:text-slate-400 ml-1">
+              <span className="block min-[420px]:inline text-xs font-normal text-slate-500 dark:text-slate-400 min-[420px]:ml-1">
                 /mo
               </span>
             </div>
