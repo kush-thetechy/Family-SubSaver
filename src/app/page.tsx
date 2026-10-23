@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useApp } from "@/context/AppContext";
-import { formatINR, calculateMonthlyPaise } from "@/lib/calculations";
+import { formatINR, calculateMonthlyPaise, PRIVATE_PAYER_KEY } from "@/lib/calculations";
 import {
   CreditCard,
   AlertTriangle,
@@ -27,13 +27,17 @@ export default function DashboardPage() {
     recommendations,
     auditProgress,
     members,
+    isDemoMode,
   } = useApp();
 
   // Find upcoming renewals in next 30 days
-  const now = new Date("2026-10-15"); // Reference app date
+  // Demo data is anchored to a fixed reference date; real accounts use today.
+  const now = isDemoMode ? new Date("2026-10-15") : new Date();
   const upcomingRenewals = subscriptions
     .filter((s) => {
       if (!s.is_active || !s.renewal_date) return false;
+      // Totals-only rows of other people contribute to totals only: no renewal details.
+      if (s.payer_id !== currentProfile.id && s.visibility === "totals_only") return false;
       // A family-wide view excludes all hidden records and redacts totals-only records.
       if (
         (isFamilyView && s.visibility !== "full_details") ||
@@ -276,7 +280,7 @@ export default function DashboardPage() {
                       {sub.service_name}
                     </span>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
-                      Paid by {sub.payerName} • {sub.billing_channel || "Direct"}
+                      Paid by {sub.payerName}{sub.billing_channel ? ` • ${sub.billing_channel}` : ""}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -439,7 +443,7 @@ export default function DashboardPage() {
                   <div key={payerId} className="space-y-1">
                     <div className="flex justify-between text-xs font-medium">
                       <span className="text-slate-700 dark:text-slate-300">
-                        {member?.name || "Unknown Member"}
+                        {payerId === PRIVATE_PAYER_KEY ? "Private (other members)" : member?.name || "Unknown Member"}
                       </span>
                       <span className="text-slate-900 dark:text-white font-bold">
                         {formatINR(paise)}/mo ({percent}%)

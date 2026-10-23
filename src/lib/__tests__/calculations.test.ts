@@ -171,3 +171,25 @@ describe("Privacy & Visibility Controls", () => {
     );
   });
 });
+
+describe("totals-only rows of other members", () => {
+  const base = {
+    household_id: "h", category: "ott", billing_cycle: "monthly", amount_paise: 19900,
+    user_ids: [], is_active: true, source: "import", created_at: "", updated_at: "",
+  } as const;
+  const mine = { ...base, id: "1", service_name: "Mine", payer_id: "me", visibility: "full_details" } as unknown as Subscription;
+  const theirs = { ...base, id: "2", service_name: "Private subscription", payer_id: "them", visibility: "totals_only" } as unknown as Subscription;
+
+  it("count toward the total but do not reveal the payer", () => {
+    const s = calculateHouseholdSummary([mine, theirs], "me");
+    expect(s.monthlyRecurringPaise).toBe(39800);
+    expect(s.payerBreakdown["them"]).toBeUndefined();
+    expect(s.payerBreakdown["__private__"]).toBe(19900);
+  });
+
+  it("do not feed named savings recommendations", async () => {
+    const { generateSavingsRecommendations } = await import("../recommendations");
+    const dup = { ...theirs, service_name: "Mine" } as unknown as Subscription;
+    expect(generateSavingsRecommendations([mine, dup], "me")).toHaveLength(0);
+  });
+});

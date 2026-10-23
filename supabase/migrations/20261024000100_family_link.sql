@@ -250,9 +250,11 @@ as $$
   select s.id, s.payer_id, m.name,
          case when s.visibility = 'totals_only' then 'Private subscription' else s.service_name end,
          case when s.visibility = 'totals_only' then null else s.plan_name end,
-         s.category, s.billing_cycle,
+         case when s.visibility = 'totals_only' then 'other' else s.category end,
+         s.billing_cycle,
          s.amount_paise,
-         s.renewal_date, s.is_active, s.visibility
+         case when s.visibility = 'totals_only' then null else s.renewal_date end,
+         s.is_active, s.visibility
     from public.subscriptions s
     join public.household_members m
       on m.user_id = s.payer_id and m.household_id = h
