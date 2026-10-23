@@ -20,6 +20,7 @@ import {
   isGmailEnabledForUser,
 } from "@/lib/connectors/gmail-policy";
 import { GmailHistoryRange, GmailScanCoverage, Subscription } from "@/types";
+import { computeImportKey } from "@/lib/connectors/import-key";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -517,6 +518,10 @@ async function handlePost(request: Request) {
     }
     const safeCandidates = candidates.map((candidate) => ({
       ...candidate,
+      import_key: computeImportKey(
+        userId,
+        candidate.evidence.map((e) => e.message_id)
+      ),
       billing_channel: candidate.billing_channel.replace(
         /\s*\(Card\s+••••\s*\d{4}\)/gi,
         ""
