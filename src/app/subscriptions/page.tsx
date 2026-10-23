@@ -40,6 +40,7 @@ function SubscriptionsContent() {
     currentProfile,
     household,
     isFamilyView,
+    isDemoMode,
     members,
     addSubscription,
     updateSubscription,
@@ -271,6 +272,7 @@ function SubscriptionsContent() {
     subscriptions,
     currentProfile.id,
     isFamilyView,
+    isDemoMode,
     searchQuery,
     selectedCategory,
     selectedPayer,
@@ -472,15 +474,15 @@ function SubscriptionsContent() {
               <div className="mt-5 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
                 <button
                   onClick={() => openEditModal(sub)}
-                  disabled={sub.isRedacted}
+                  disabled={sub.isRedacted || (!isDemoMode && !isOwn)}
                   className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-40"
-                  title="Edit subscription"
+                  title={!isDemoMode && !isOwn ? "Only the payer can edit this" : "Edit subscription"}
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => void handleDelete(sub.id, sub.service_name)}
-                  disabled={sub.isRedacted}
+                  disabled={sub.isRedacted || (!isDemoMode && !isOwn)}
                   className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-40"
                   title="Delete subscription"
                 >

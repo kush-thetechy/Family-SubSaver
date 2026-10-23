@@ -138,6 +138,15 @@ describe("family link flow", () => {
     await expect(call(MEMBER, "select public.accept_household_invitation($1,true)", [sha("t4")])).rejects.toThrow(/not valid/);
   });
 
+  it("my_linked_households lists only memberships the caller joined", async () => {
+    await call(OWNER, "select public.create_household_invitation($1)", [sha("t5")]);
+    await call(MEMBER, "select public.accept_household_invitation($1,true)", [sha("t5")]);
+    const mine = await call(MEMBER, "select * from public.my_linked_households()");
+    expect(mine.rows).toHaveLength(1);
+    expect((await call(OWNER, "select * from public.my_linked_households()")).rows).toHaveLength(0);
+    expect((await call(STRANGER, "select * from public.my_linked_households()")).rows).toHaveLength(0);
+  });
+
   it("anon cannot call any family function", async () => {
     await db.exec("set role anon");
     await expect(db.query("select public.accept_household_invitation($1,true)", [sha("t4")])).rejects.toThrow();

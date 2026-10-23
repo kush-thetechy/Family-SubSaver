@@ -93,3 +93,16 @@ export async function removeMemberRemote(householdId: string, userId: string): P
   const { error } = await client().rpc("remove_household_member", { h: householdId, member: userId });
   if (error) throw new Error(error.message);
 }
+
+export interface LinkedHousehold {
+  household_id: string;
+  household_name: string;
+  owner_name: string;
+  joined_at: string;
+}
+
+export async function myLinkedHouseholds(): Promise<LinkedHousehold[]> {
+  const { data, error } = await client().rpc("my_linked_households");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LinkedHousehold[];
+}

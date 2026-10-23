@@ -8,6 +8,8 @@ import {
   createInvite,
   leaveHousehold,
   listInvites,
+  myLinkedHouseholds,
+  type LinkedHousehold,
   removeMemberRemote,
   revokeInvite,
   type OpenInvite,
@@ -16,6 +18,7 @@ import {
 export function FamilyLinkPanel() {
   const { household, members, currentProfile } = useApp();
   const [invites, setInvites] = useState<OpenInvite[]>([]);
+  const [linked, setLinked] = useState<LinkedHousehold[]>([]);
   const [label, setLabel] = useState("");
   const [fresh, setFresh] = useState("");
   const [error, setError] = useState("");
@@ -24,6 +27,7 @@ export function FamilyLinkPanel() {
 
   const reload = useCallback(() => {
     listInvites().then(setInvites).catch((e: Error) => setError(e.message));
+    myLinkedHouseholds().then(setLinked).catch((e: Error) => setError(e.message));
   }, []);
   useEffect(reload, [reload]);
 
@@ -88,6 +92,21 @@ export function FamilyLinkPanel() {
               <Copy className="h-3.5 w-3.5" /> {copied ? "Copied" : "Copy"}
             </button>
           </div>
+        </div>
+      )}
+      {linked.length > 0 && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 text-sm" data-testid="linked-households">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">You share with</h3>
+          <ul className="mt-2 space-y-2">
+            {linked.map((l) => (
+              <li key={l.household_id} className="flex items-center justify-between">
+                <span>
+                  {l.owner_name}&apos;s household <span className="text-xs text-slate-500">(since {new Date(l.joined_at).toLocaleDateString()})</span>
+                </span>
+                <LeaveHouseholdButton householdId={l.household_id} name={l.owner_name} />
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {open.length > 0 && (
