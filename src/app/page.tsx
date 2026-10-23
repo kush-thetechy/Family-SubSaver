@@ -18,6 +18,14 @@ import {
   FileUp,
 } from "lucide-react";
 
+// Whole calendar days from `now` (local date) to a YYYY-MM-DD renewal date.
+function daysUntil(renewal: string, now: Date): number {
+  const [y, m, d] = renewal.split("-").map(Number);
+  const target = Date.UTC(y, m - 1, d);
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target - today) / 86400000);
+}
+
 export default function DashboardPage() {
   const {
     currentProfile,
@@ -47,17 +55,11 @@ export default function DashboardPage() {
       ) {
         return false;
       }
-      const rDate = new Date(s.renewal_date);
-      const diffDays = Math.ceil(
-        (rDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-      );
+      const diffDays = daysUntil(s.renewal_date!, now);
       return diffDays >= 0 && diffDays <= 30;
     })
     .map((s) => {
-      const rDate = new Date(s.renewal_date!);
-      const diffDays = Math.ceil(
-        (rDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-      );
+      const diffDays = daysUntil(s.renewal_date!, now);
       const payer = members.find((m) => m.user_id === s.payer_id);
       return {
         ...s,

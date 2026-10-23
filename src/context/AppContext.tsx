@@ -254,7 +254,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             }
           }
           const shared = (sharedRes.data ?? []) as {
-            id: string; payer_id: string; service_name: string; plan_name: string | null;
+            id: string; payer_id: string | null; service_name: string; plan_name: string | null;
             category: Subscription["category"]; billing_cycle: Subscription["billing_cycle"];
             amount_paise: number | string; renewal_date: string | null; is_active: boolean;
             visibility: Subscription["visibility"];
@@ -270,8 +270,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               category: x.category,
               billing_cycle: x.billing_cycle,
               amount_paise: Number(x.amount_paise),
-              payer_id: x.payer_id,
-              user_ids: [x.payer_id],
+              payer_id: x.payer_id ?? "",
+              user_ids: x.payer_id ? [x.payer_id] : [],
               renewal_date: x.renewal_date ?? undefined,
               is_active: x.is_active,
               visibility: x.visibility,
@@ -578,13 +578,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
     : generateSavingsRecommendations(subscriptions, currentProfile.id);
 
-  const visibleSubs = subscriptions.filter((sub) => {
-    if (isFamilyView) return sub.visibility !== "hidden";
-    if (sub.payer_id !== currentProfile.id && sub.visibility === "hidden") {
-      return false;
-    }
-    return true;
-  });
+  // The audit scores the viewer's own inventory. Rows other members share are
+  // metadata-only (no channel, no renewal for totals-only) and must not lower it.
+  const visibleSubs = subscriptions.filter(
+    (sub) => sub.payer_id === currentProfile.id
+  );
   const missingPayerCount = visibleSubs.filter((sub) => !sub.payer_id).length;
   const missingUsersCount = visibleSubs.filter(
     (sub) => !sub.user_ids || sub.user_ids.length === 0

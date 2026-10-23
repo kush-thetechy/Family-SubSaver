@@ -92,6 +92,15 @@ describe("family link flow", () => {
     expect(Number(row.amount_paise)).toBe(19900);
     expect(row.renewal_date).toBeNull();
     expect(row.category).toBe('other');
+    expect(row.payer_id).toBeNull();
+    expect(row.payer_name).toBeNull();
+    const memberRowId = (await db.query("select id from public.subscriptions where service_name='SecretStreaming'")).rows[0] as any;
+    expect(row.id).not.toBe(memberRowId.id);
+    expect(JSON.stringify(row)).not.toContain(MEMBER);
+    expect(JSON.stringify(row)).not.toContain("SecretStreaming");
+    // the payer still sees their own row in full
+    const own = await call(MEMBER, "select * from public.household_shared_subscriptions($1)", [ownerHh]);
+    expect(own.rows.map((x: any) => x.service_name)).toContain("SecretStreaming");
     await db.query("delete from public.subscriptions where service_name='SecretStreaming'");
   });
 
