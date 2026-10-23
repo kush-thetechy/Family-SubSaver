@@ -496,12 +496,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       viewer: isFamilyView ? "Whole family" : currentProfile.name,
       household,
       members,
-      subscriptions: subscriptions.filter((sub) => {
-        if (isFamilyView) return sub.visibility === "full_details";
-        return (
-          sub.payer_id === currentProfile.id || sub.visibility !== "hidden"
-        );
-      }),
+      subscriptions: subscriptions
+        .filter((sub) => {
+          if (sub.payer_id === currentProfile.id) return true;
+          if (isFamilyView) return sub.visibility === "full_details";
+          return sub.visibility !== "hidden";
+        })
+        .map((sub) =>
+          sub.payer_id !== currentProfile.id && sub.visibility === "totals_only"
+            ? {
+                id: sub.id,
+                service_name: "Private subscription",
+                category: "other",
+                billing_cycle: sub.billing_cycle,
+                amount_paise: sub.amount_paise,
+                is_active: sub.is_active,
+                visibility: sub.visibility,
+              }
+            : sub
+        ),
     };
     return JSON.stringify(exportPayload, null, 2);
   };

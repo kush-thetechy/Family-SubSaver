@@ -90,6 +90,8 @@ describe("family link flow", () => {
     const row = r.rows.find((x: any) => x.service_name === "Private subscription") as any;
     expect(row.plan_name).toBeNull();
     expect(Number(row.amount_paise)).toBe(19900);
+    expect(row.renewal_date).toBeNull();
+    expect(row.category).toBe('other');
     await db.query("delete from public.subscriptions where service_name='SecretStreaming'");
   });
 
