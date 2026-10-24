@@ -43,4 +43,17 @@ describe("batched scan consent v3 and coverage bounds", () => {
     await call("select public.withdraw_own_gmail_consent('gmail-discovery-v3-batched')");
     expect((await call("select * from public.gmail_consents")).rows).toHaveLength(0);
   });
+  it("records coverage once per (scan_id, run_no) even when replayed", async () => {
+    const db = await createTestDb();
+    await createUser(db, A, "a@example.com");
+    const call = (sql: string, p: unknown[] = []) => asUser(db, A, () => db.query(sql, p));
+    await call("select public.grant_own_gmail_consent('gmail-discovery-v3-batched')");
+    const q = `select public.record_own_gmail_scan_coverage_once($1::uuid, $2, '13m', now() - interval '13 months', now(), 14, 1020, 1000, 1000, 1000, 0, false, true, $3::jsonb) as id`;
+    const sid = "22222222-2222-2222-2222-222222222222";
+    const a = (await call(q, [sid, 1, lanes(1000)])).rows[0] as { id: string };
+    const b = (await call(q, [sid, 1, lanes(1000)])).rows[0] as { id: string };
+    expect(b.id).toBe(a.id);
+    await call(q, [sid, 2, lanes(1000)]);
+    expect((await call("select count(*)::int as n from public.gmail_scan_coverage")).rows[0]).toMatchObject({ n: 2 });
+  });
 });

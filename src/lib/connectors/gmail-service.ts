@@ -1488,7 +1488,11 @@ function isRetryableGmailStatus(status: number): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-export async function fetchGmailJson<T>(url: string, accessToken: string): Promise<T> {
+export async function fetchGmailJson<T>(
+  url: string,
+  accessToken: string,
+  options: { deadline?: number } = {}
+): Promise<T> {
   let response!: Response;
   for (let attempt = 0; ; attempt += 1) {
     response = await fetch(url, {
@@ -1510,6 +1514,8 @@ export async function fetchGmailJson<T>(url: string, accessToken: string): Promi
     const delay = Number.isFinite(retryAfter) && retryAfter > 0
       ? Math.min(retryAfter * 1000, 5000)
       : RETRY_DELAYS_MS[attempt];
+    // Never sleep past the caller's hard deadline: give up and report the status instead.
+    if (options.deadline !== undefined && Date.now() + delay > options.deadline) break;
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
 

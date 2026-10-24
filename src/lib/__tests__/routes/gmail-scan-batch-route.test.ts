@@ -49,17 +49,20 @@ vi.mock("@/lib/connectors/gmail-batch", async () => {
   return {
     ...actual,
     runGmailBatch: async (_t: string, state: any) => ({
-      state: { ...state, attempted: 40, selected: 40, fetched: 40 },
+      state: { ...state, attempted: 40, selected: 40, fetched: 40, pending: [] },
       evidence: [
         { id: "raw-id", message_id: "RAWMSGID123", source: "gmail", evidence_type: "receipt", date: "2026-01-01", sender: "a@b.com", subject: "secret subject", summary: "s" },
       ],
       done: st.done,
       truncated: false,
+      resumable: false,
     }),
   };
 });
 
 import { POST } from "@/app/api/connectors/gmail/scan/route";
+import { POST as keysPost } from "@/app/api/connectors/gmail/import-keys/route";
+import { evidenceKey, evidenceProof, computeImportKey } from "@/lib/connectors/import-key";
 
 const call = (body: unknown) =>
   POST(
@@ -115,5 +118,35 @@ describe("batched gmail scan route", () => {
     expect((await call({ mode: "live", batch: true, historyRange: "30d", cursor: j1.cursor })).status).toBe(400);
     expect((await call({ mode: "live", batch: true, historyRange: "13m", cursor: j1.cursor.slice(0, -4) + "AAAA" })).status).toBe(400);
     expect(st.quotaCalls).toBe(1);
+  });
+});
+
+describe("import-keys endpoint", () => {
+  const post = (body: unknown, origin = "https://app.example") =>
+    keysPost(new Request("https://app.example/api/connectors/gmail/import-keys", {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+  const ev = (id: string, user = "u1") => {
+    const key = evidenceKey(user, id);
+    return { key, proof: evidenceProof(user, key) };
+  };
+  it("issues the same key the single-shot path would, only for proven evidence", async () => {
+    const r = await post({ groups: [{ evidence: [ev("M1"), ev("M2")] }] });
+    const j = await r.json();
+    expect(j.keys[0]).toBe(computeImportKey("u1", ["M1", "M2"]));
+  });
+  it("refuses forged, another user's, or missing proofs and foreign origins", async () => {
+    const forged = { key: evidenceKey("u1", "M1"), proof: "0".repeat(24) };
+    const other = ev("M1", "u2");
+    const j = await (await post({ groups: [{ evidence: [forged] }, { evidence: [other] }, { evidence: [{ key: "a" }] }, { evidence: [] }] })).json();
+    expect(j.keys).toEqual([null, null, null, null]);
+    expect((await post({ groups: [] }, "https://evil.example")).status).toBe(403);
+    expect((await post({ groups: "x" })).status).toBe(400);
+  });
+  it("is closed when the release gate is closed", async () => {
+    st.enabled = false;
+    expect((await post({ groups: [] })).status).toBe(403);
   });
 });

@@ -143,6 +143,8 @@ export type DiscoveryEvidenceType =
 
 export interface DiscoveryEvidence {
   id: string;
+  /** server-issued proof for message_id when it is an opaque evidence key (batched scans) */
+  key_proof?: string;
   source: "gmail" | "screenshot" | "sms";
   evidence_type: DiscoveryEvidenceType;
   message_id?: string;

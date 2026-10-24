@@ -25,6 +25,8 @@ import { handleBatchedScan } from "@/lib/connectors/batched-scan-handler";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
+export const maxDuration = 60;
+
 interface ScanRequestBody {
   mode?: "live" | "sandbox";
   historyRange?: string;
