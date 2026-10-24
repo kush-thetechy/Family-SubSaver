@@ -810,6 +810,41 @@ function merchantFromSenderRaw(sender: string): string | undefined {
   return normalizeServiceName(label.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 }
 
+
+// --- Precision gate for generic (non-store, non-bank) messages -------------------------------
+// A generic message becomes payment evidence only when it reads like a transaction: a receipt or
+// payment phrase, and an amount tied to payment words. Newsletters, job alerts and campus mail
+// that merely mention a brand or a rupee figure are not evidence.
+const RECEIPT_SIGNAL =
+  /\b(receipt|tax invoice|invoice (?:no|number|#|for|from|is)|payment (?:successful|received|confirmation|confirmed|of|made)|order (?:confirmation|confirmed|summary|#)|thank you for (?:your )?(?:payment|purchase|order|subscribing)|you(?:'ve| have) (?:paid|been charged)|amount (?:paid|charged|debited|due)|(?:has|have) been (?:charged|debited)|we(?:'ve| have) received your payment|(?:subscription|membership|plan) (?:has been |was |is )?(?:renewed|confirmed|started|activated|will renew|renews)|auto-?renew|(?:₹|inr|rs\.?)\s*[0-9][\d,]*(?:\.\d{1,2})?\s+(?:has been |was )?(?:debited|charged|paid|deducted)|(?:debited|charged|deducted) (?:from|with|by|via)|upi (?:autopay|txn|transaction|payment|mandate)|billed (?:for|at|monthly|annually|yearly|every)|your (?:next )?(?:billing|renewal) date)\b/i;
+const AMOUNT_LABEL_NEAR =
+  /(?:total|amount|paid|charged|charge|price|billed|payment|debited|credited|refunded?|plan|subtotal|due|renews?|renewal)[^\n]{0,40}(?:₹|inr|rs\.?)\s*[0-9]|(?:₹|inr|rs\.?)\s*[0-9][\d,]*(?:\.\d{1,2})?[^\n]{0,40}(?:paid|charged|billed|debited|refunded|per (?:month|year)|\/(?:mo|month|yr|year)|only|total)/i;
+const NON_PAYMENT_AMOUNT =
+  /(?:stipend|salary|ctc|lpa|prize|reimburs|scholarship|bounty|funding|valuation|crore|lakh|billion|million|hiring|internship|per month!)/i;
+
+function headerPresent(headers: GmailHeader[] | undefined, name: string): boolean {
+  return Boolean(getHeader(headers ?? [], name));
+}
+
+/** True when the sender looks like an individual's mailbox (first.last@org) rather than a merchant. */
+export function looksLikePersonSender(sender: string): boolean {
+  const m = sender.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  const display = (m ? m[1] : "").trim();
+  const addr = (m ? m[2] : sender).trim().toLowerCase();
+  const local = addr.split("@")[0] ?? "";
+  const personLocal = /^[a-z]{2,}(?:[._-][a-z]{1,})+\d{0,4}$/.test(local) && !/(billing|support|noreply|no-reply|receipt|invoice|payment|team|care|help|info|hello|admin|club|office|ops|alerts?)/.test(local);
+  const twoWords = /^[A-Z][a-z]+(?: [A-Z][a-z]+){1,2}$/.test(display);
+  return personLocal || (twoWords && /^[a-z]+\d{0,4}$/.test(local) && !/(billing|support|team|care|help|info|hello)/.test(local));
+}
+
+/** A known-service keyword counts only in the sender or subject, or right after a payee phrase. */
+function keywordIsPayee(keyword: string, sender: string, subject: string, clean: string): boolean {
+  const k = keyword.toLowerCase();
+  if (sender.toLowerCase().includes(k) || subject.toLowerCase().includes(k)) return true;
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:paid to|payment to|merchant:?|billed by|invoice from|receipt from|order from|subscription to|your)\\s+${escaped}\\b`, "i").test(clean);
+}
+
 export function parseGeneralGmailMessage(
   message: GmailMessage
 ): DiscoveryEvidence | null {
@@ -888,17 +923,60 @@ export function parseGeneralGmailMessage(
     evidenceType = "service_event";
   }
 
-  // Find Service
+  const hasReceiptSignal = RECEIPT_SIGNAL.test(`${subject}\n${clean}`);
+  const isBulk =
+    headerPresent(headers, "list-unsubscribe") || /^(bulk|list|junk)$/i.test(getHeader(headers, "precedence"));
+  const personSender = looksLikePersonSender(sender);
+
+  // Find Service: a keyword must be the payee (sender, subject or payee phrase), or sit next to
+  // an amount in a message that reads like a receipt. A passing mention is not enough.
+  const keywordNearAmount = (kw: string): boolean => {
+    const i = lower.indexOf(kw);
+    if (i < 0) return false;
+    const around = clean.slice(Math.max(0, i - 80), i + kw.length + 80);
+    return /(?:₹|inr|rs\.?)\s*[0-9]/i.test(around);
+  };
   let matchedService: string | undefined;
   for (const svc of KNOWN_SERVICES) {
-    if (svc.keywords.some((kw) => lower.includes(kw))) {
+    if (
+      svc.keywords.some(
+        (kw) =>
+          lower.includes(kw) &&
+          (keywordIsPayee(kw, sender, subject, clean) ||
+            (hasReceiptSignal && !isBulk && !personSender && keywordNearAmount(kw)))
+      )
+    ) {
       matchedService = svc.name;
       break;
     }
   }
 
-  // Find Amount (explicit INR)
-  const amountRupees = findInrAmount(clean);
+  if (matchedService && (evidenceType === "cancellation_notice" || evidenceType === "service_event")) {
+    const svc = KNOWN_SERVICES.find((x) => x.name === matchedService);
+    const inSender = svc?.keywords.some((kw) => sender.toLowerCase().includes(kw));
+    const bulk = headerPresent(headers, "list-unsubscribe") || /^(bulk|list|junk)$/i.test(getHeader(headers, "precedence"));
+    if (!inSender && (bulk || !RECEIPT_SIGNAL.test(`${subject}\n${clean}`))) return null;
+  }
+
+  // Lifecycle and status notices need the service named by the sender or subject.
+  if ((evidenceType === "cancellation_notice" || evidenceType === "service_event") && !matchedService) {
+    const fromSender = personSender ? undefined : merchantFromSender(sender);
+    if (!fromSender || isBulk) return null;
+  }
+  // Payment-like evidence must read like a transaction, not a newsletter or campus mail.
+  if (
+    evidenceType === "merchant_invoice" ||
+    evidenceType === "transaction_alert"
+  ) {
+    if (!hasReceiptSignal) return null;
+    if (isBulk && !matchedService) return null;
+  }
+
+  // Find Amount (explicit INR), tied to payment words and not a stipend/prize/market figure.
+  let amountRupees: number | undefined;
+  if (AMOUNT_LABEL_NEAR.test(clean) && !(NON_PAYMENT_AMOUNT.test(subject) && !matchedService)) {
+    amountRupees = findInrAmount(clean);
+  }
   if (
     !amountRupees &&
     evidenceType !== "cancellation_notice" &&
@@ -911,12 +989,15 @@ export function parseGeneralGmailMessage(
   if (!matchedService) {
     if (evidenceType === "service_event") return null;
     merchantInferred = true;
-    const fromSender = merchantFromSender(sender);
+    const fromSender = personSender ? undefined : merchantFromSender(sender);
     const merchantMatch = fromSender ? null : clean.match(/(?:at|to|for|towards|merchant:?)\s+([A-Za-z0-9&.\s]{3,30})(?:\s+on|\s+via|\s+ref|\s+dated|$)/i);
     if (fromSender) {
       matchedService = fromSender;
     } else if (merchantMatch && merchantMatch[1].trim()) {
       matchedService = normalizeServiceName(merchantMatch[1].trim());
+    } else if (evidenceType === "merchant_invoice") {
+      // No payee named by sender, subject or payment phrase: not usable as subscription evidence.
+      return null;
     } else {
       matchedService = "Subscription Service";
     }
