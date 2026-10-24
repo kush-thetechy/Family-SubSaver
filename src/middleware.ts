@@ -1,6 +1,7 @@
 import type { CookieOptions } from "@supabase/ssr";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { PUBLIC_LEGAL_PATHS } from "@/lib/legal";
 
 export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -13,6 +14,7 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_ENABLE_FAMILY_LINK === "true" &&
     request.nextUrl.pathname === "/join";
   const isApiRequest = request.nextUrl.pathname.startsWith("/api/");
+  const isLegalPage = PUBLIC_LEGAL_PATHS.includes(request.nextUrl.pathname);
 
   if (
     !supabaseUrl ||
@@ -20,7 +22,7 @@ export async function middleware(request: NextRequest) {
     supabaseUrl.includes("your-project") ||
     supabaseAnonKey.includes("your-anon-key")
   ) {
-    if (demoModeEnabled || isLoginPage || isAuthCallback || isApiRequest) {
+    if (demoModeEnabled || isLoginPage || isAuthCallback || isApiRequest || isLegalPage) {
       return NextResponse.next();
     }
 
@@ -56,7 +58,7 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user && !isLoginPage && !isAuthCallback && !isJoinPage) {
+  if (!user && !isLoginPage && !isAuthCallback && !isJoinPage && !isLegalPage) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";
