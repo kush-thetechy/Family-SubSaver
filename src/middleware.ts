@@ -14,7 +14,9 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_ENABLE_FAMILY_LINK === "true" &&
     request.nextUrl.pathname === "/join";
   const isApiRequest = request.nextUrl.pathname.startsWith("/api/");
-  const isLegalPage = PUBLIC_LEGAL_PATHS.includes(request.nextUrl.pathname);
+  const isLegalPage =
+    PUBLIC_LEGAL_PATHS.includes(request.nextUrl.pathname) ||
+    request.nextUrl.pathname === "/api/billing/webhook"; // signed provider callback, verified in the route
 
   if (
     !supabaseUrl ||
