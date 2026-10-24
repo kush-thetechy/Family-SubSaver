@@ -28,6 +28,7 @@ describe("toDodoEvent", () => {
     expect(toDodoEvent(evt({}, "payment.failed")) && (toDodoEvent(evt({}, "payment.failed")) as { status: string }).status).toBe("failed");
     expect(toDodoEvent(evt({}, "refund.succeeded"))).toEqual({ kind: "refund", paymentId: "pay_1" });
     expect(toDodoEvent(evt({}, "dispute.opened"))).toBeNull();
+    expect(toDodoEvent(evt({}, "dispute.lost"))).toEqual({ kind: "refund", paymentId: "pay_1" });
     expect(toDodoEvent(evt({ checkout_session_id: undefined }))).toBeNull();
     expect(toDodoEvent(evt({ metadata: {} }))).toBeNull();
     expect(toDodoEvent(evt({ metadata: { user_id: "x" } }))).toBeNull();

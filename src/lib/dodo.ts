@@ -71,7 +71,7 @@ export function toDodoEvent(raw: unknown): DodoEvent | null {
   if (!d || typeof d !== "object") return null;
   const paymentId = typeof d.payment_id === "string" ? d.payment_id : "";
   if (!paymentId) return null;
-  if (evt.type === "refund.succeeded") return { kind: "refund", paymentId };
+  if (evt.type === "refund.succeeded" || evt.type === "dispute.lost") return { kind: "refund", paymentId };
   const status = evt.type === "payment.succeeded" ? "paid" : evt.type === "payment.failed" ? "failed" : null;
   if (!status) return null;
   const metadata = d.metadata as Record<string, unknown> | undefined;
