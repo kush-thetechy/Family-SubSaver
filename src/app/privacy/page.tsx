@@ -11,14 +11,15 @@ export default function Page() {
           <ul className="list-disc pl-5">
             <li>Account email and sign-in credentials, handled by Supabase Auth.</li>
             <li>Subscriptions you save: service, plan, category, price, billing cycle, renewal date, who pays, billing channel, notes and visibility.</li>
-            <li>Household name and members, invitation links (stored as a hash, single use, expire after 7 days).</li>
-            <li>Your Gmail consent record and scan coverage counts. No email content.</li>
-            <li>Payment record for the one-time fee: payment id, amount, currency, status and date, received from our payment provider, Dodo Payments. We do not receive or store your full card number, UPI PIN or bank login. Dodo Payments sends us a confirmation that can include your name, email, billing country and the last four card digits; we keep only the fields listed here.</li>
+            <li>Household name and members, and invitation links (stored as a hash, single use, expire after 7 days).</li>
+            <li>Your Gmail consent record and scan coverage counts (how many messages were searched and read), and a first-use record: which kind of use (Gmail scan or screenshot import), the date it first showed you live subscriptions, and how many. This starts the 30-day free period. No email content.</li>
+            <li>Payment records for the one-time fee: payment id, checkout session id, your user id, whether it was a test or live payment, amount, currency, status and date, received from Dodo Payments. We also keep a short-lived checkout session record (session id, your user id, mode, time) so a payment can be matched to the right account; checkout session records are removed by daily cleanup once more than 30 days old. If a payment cannot be matched to an account, we keep the same fields and the reason it could not be matched until it is resolved. We do not receive or store your full card number, UPI PIN or bank login. Dodo Payments sends us a confirmation that can include your name, email, billing country and the last four card digits; we do not keep those extra fields.</li>
           </ul>
           <h2 className="font-semibold">Gmail, only if you connect it</h2>
           <ul className="list-disc pl-5">
-            <li>Read-only access. Scans run only when you click. No background scanning. Attachments are not read.</li>
-            <li>The app searches your mailbox for subscription receipts, renewals and payment mandate messages, reads matched messages during that request, extracts service, amount, cycle and dates, and shows candidates. Raw message content is not stored. No subscription is added to your list until you confirm it. The only things stored from a scan are your consent record and coverage counts (how many messages were searched and read).</li>
+            <li>Read-only access. Scans run only when you click. No background scanning.</li>
+            <li>Screenshot imports are read in your browser and are not uploaded.</li>
+            <li>The app searches your mailbox for subscription receipts, renewals and payment mandate messages, sends matched messages to our server, which reads them during that request, extracts service, amount, cycle and dates, and shows candidates. We do not write message content to our database or logs, and attachments are not opened. No subscription is added to your list until you confirm it. From a scan we store only your consent record, coverage counts and the first-use record described above. Hosting providers keep ordinary request logs (time, page, status), which contain no message content.</li>
             <li>The access token lives in a short-lived, encrypted, HttpOnly browser cookie, not in our database.</li>
             <li>You can withdraw consent, disconnect, delete records that came from Gmail, or delete your account in Settings.</li>
             <li>Gmail data is not sold, not used for advertising, and not used to train AI models.</li>
