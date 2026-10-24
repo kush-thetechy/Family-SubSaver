@@ -1,3 +1,5 @@
+import { FEE_AMOUNT_PAISE } from "@/lib/billing";
+
 export interface DodoEnv {
   apiKey?: string;
   productId?: string;
@@ -27,6 +29,9 @@ export async function createDodoCheckout(
     body: JSON.stringify({
       product_cart: [{ product_id: env.productId, quantity: 1 }],
       metadata: { user_id: input.userId },
+      billing_currency: "INR",
+      billing_address: { country: "IN" },
+      feature_flags: { allow_currency_selection: false },
       return_url: input.returnUrl,
     }),
   });
@@ -63,6 +68,8 @@ export function toPaymentRecord(raw: unknown): PaymentRecord | null {
   const paymentId = typeof d.payment_id === "string" ? d.payment_id : "";
   const amount = typeof d.total_amount === "number" ? d.total_amount : NaN;
   const currency = typeof d.currency === "string" ? d.currency.toUpperCase() : "";
+  // A paid record must match the approved fee exactly (INR, Rs 60 total); anything else is not recorded.
+  if (status === "paid" && (currency !== "INR" || amount !== FEE_AMOUNT_PAISE)) return null;
   if (!UUID.test(userId) || !paymentId || !Number.isInteger(amount) || amount <= 0 || currency.length !== 3) return null;
   const when = typeof evt.timestamp === "string" && !Number.isNaN(Date.parse(evt.timestamp)) ? evt.timestamp : new Date().toISOString();
   return { paymentId, userId, amountMinor: amount, currency, status, occurredAt: when };

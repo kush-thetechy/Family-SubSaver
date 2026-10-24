@@ -28,6 +28,8 @@ describe("toPaymentRecord", () => {
     expect(toPaymentRecord(evt({ metadata: {} }))).toBeNull();
     expect(toPaymentRecord(evt({ metadata: { user_id: "x" } }))).toBeNull();
     expect(toPaymentRecord(evt({ total_amount: 0 }))).toBeNull();
+    expect(toPaymentRecord(evt({ total_amount: 5000 }))).toBeNull();
+    expect(toPaymentRecord(evt({ currency: "usd" }))).toBeNull();
     expect(toPaymentRecord(null)).toBeNull();
   });
 });
@@ -42,7 +44,9 @@ describe("createDodoCheckout", () => {
     const r = await createDodoCheckout({ userId: uid, returnUrl: "https://x/pricing" }, { apiKey: "k", productId: "pdt_1", baseUrl: "https://test.dodopayments.com" }, f);
     expect(r.sessionId).toBe("cks_1");
     expect(sent?.url).toBe("https://test.dodopayments.com/checkouts");
-    expect(JSON.parse(sent!.body).metadata).toEqual({ user_id: uid });
+    const body = JSON.parse(sent!.body);
+    expect(body.metadata).toEqual({ user_id: uid });
+    expect(body.billing_currency).toBe("INR");
   });
   it("throws when unconfigured or on failure", async () => {
     await expect(createDodoCheckout({ userId: uid, returnUrl: "x" }, { baseUrl: "b" })).rejects.toThrow();
