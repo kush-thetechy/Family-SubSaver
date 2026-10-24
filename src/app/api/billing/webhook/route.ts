@@ -48,6 +48,23 @@ export async function POST(request: Request) {
       .maybeSingle();
     if (sErr) return fail(500);
     if (!session || session.user_id !== event.userId || session.mode !== mode) {
+      // Signed but unmatched. For a successful payment keep a durable record for manual reconciliation.
+      if (event.status === "paid") {
+        const { error: uErr } = await admin.from("unmatched_payments").upsert(
+          {
+            provider_payment_id: event.paymentId,
+            claimed_user_id: event.userId,
+            checkout_session_id: event.sessionId,
+            mode,
+            amount_minor: event.amountMinor,
+            currency: event.currency,
+            reason: session ? "session_mismatch" : "unknown_session",
+          },
+          { onConflict: "provider_payment_id", ignoreDuplicates: true }
+        );
+        if (uErr) return fail(500); // let Dodo retry rather than lose it
+        console.error("Billing: paid event could not be matched to a checkout session; see unmatched_payments.");
+      }
       return NextResponse.json({ received: true });
     }
     const { data: existing, error: eErr } = await admin
