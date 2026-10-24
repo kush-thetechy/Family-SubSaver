@@ -1,5 +1,6 @@
 "use client";
 
+import { recordUsageMilestone } from "@/lib/usage-milestone";
 import { planBulkUndo } from "@/lib/bulk-undo";
 import { AlreadyImportedError } from "@/lib/already-imported";
 import { consolidateEvidenceToCandidates } from "@/lib/connectors/gmail-service";
@@ -276,6 +277,7 @@ function ImportContent() {
         return;
       }
 
+      void recordUsageMilestone("ocr_import_viewed", parsed.length);
       setScreenshotItems((current) => {
         const seenServices = new Set(
           current.map((existing) => existing.service_name.trim().toLowerCase())
@@ -589,6 +591,7 @@ function ImportContent() {
       }
 
       const candidates = data.candidates ?? [];
+      void recordUsageMilestone("gmail_scan_viewed", candidates.length);
       setGmailCandidates(candidates);
       setSelectedGmailCandidateIds(
         new Set(
