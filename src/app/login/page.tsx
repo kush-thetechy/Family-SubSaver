@@ -13,7 +13,7 @@ export default function LoginPage({
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   const router = useRouter();
-  const [mode, setMode] = useState<"sign_in" | "sign_up">("sign_in");
+  const [mode, setMode] = useState<"sign_in" | "sign_up" | "reset">("sign_in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -45,6 +45,19 @@ export default function LoginPage({
 
     setIsSubmitting(true);
     try {
+      if (mode === "reset") {
+        // Tell the callback this link is a password recovery (the allow-listed redirect URL has
+        // no query string). The cookie only picks the landing page; it grants nothing.
+        document.cookie = "fss_pw_reset=1; Max-Age=3600; Path=/; SameSite=Lax; Secure";
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        });
+        if (resetError) throw resetError;
+        setMessage(
+          "If that email has an account, a password reset link is on its way. It can take a few minutes; check spam too. Email sending is limited to a few messages an hour, so please wait before asking again."
+        );
+        return;
+      }
       if (mode === "sign_up") {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email: email.trim(),
@@ -56,6 +69,15 @@ export default function LoginPage({
         });
 
         if (signUpError) throw signUpError;
+        // With email confirmation on, Supabase answers a sign-up for an address that already has
+        // an account with a user that has no identities, and sends no email. Say so honestly.
+        if (!data.session && data.user && (data.user.identities?.length ?? 1) === 0) {
+          setMode("sign_in");
+          setError(
+            "An account with this email already exists, so no new confirmation email was sent. Sign in instead, or use \"Forgot password?\" to reset it."
+          );
+          return;
+        }
         if (!data.session) {
           setMessage(
             "Your account was created. Check your email to confirm it, then return here to sign in."
@@ -92,7 +114,7 @@ export default function LoginPage({
           FamilySubSaver
         </Link>
         <h1 className="mt-5 text-2xl font-extrabold text-slate-900 dark:text-white">
-          {mode === "sign_in" ? "Welcome back" : "Create your account"}
+          {mode === "sign_in" ? "Welcome back" : mode === "reset" ? "Reset your password" : "Create your account"}
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Sign in to manage your household subscriptions securely.
@@ -158,6 +180,7 @@ export default function LoginPage({
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800"
             />
           </label>
+          {mode !== "reset" && (
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
             Password
             <input
@@ -170,6 +193,7 @@ export default function LoginPage({
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800"
             />
           </label>
+          )}
           <button
             type="submit"
             disabled={isSubmitting || !isSupabaseConfigured}
@@ -179,9 +203,27 @@ export default function LoginPage({
               ? "Please wait..."
               : mode === "sign_in"
                 ? "Sign in"
-                : "Create account"}
+                : mode === "reset"
+                  ? "Send reset link"
+                  : "Create account"}
           </button>
         </form>
+
+        {mode !== "sign_up" && (
+          <p className="mt-4 text-center text-sm">
+            <button
+              type="button"
+              onClick={() => {
+                setMode(mode === "reset" ? "sign_in" : "reset");
+                setError("");
+                setMessage("");
+              }}
+              className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              {mode === "reset" ? "Back to sign in" : "Forgot password?"}
+            </button>
+          </p>
+        )}
 
         {allowSignUp && (
           <p className="mt-5 text-center text-sm text-slate-600 dark:text-slate-400">

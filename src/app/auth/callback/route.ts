@@ -10,9 +10,14 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (!error) {
-      return NextResponse.redirect(
-        new URL("/?auth=account_confirmed", requestUrl.origin)
+      // A recovery link lands on the new-password page. The cookie was set by this browser when
+      // it asked for the reset; it only chooses the destination and is cleared here.
+      const isRecovery = /(?:^|;\s*)fss_pw_reset=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
+      const response = NextResponse.redirect(
+        new URL(isRecovery ? "/reset-password" : "/?auth=account_confirmed", requestUrl.origin)
       );
+      if (isRecovery) response.cookies.set("fss_pw_reset", "", { maxAge: 0, path: "/" });
+      return response;
     }
   }
 
