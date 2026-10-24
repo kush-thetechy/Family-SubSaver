@@ -22,7 +22,7 @@ export const SESSION_COOKIE_NAME = "fss_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60;
 const AES_GCM_IV_BYTES = 12;
 
-function getSessionEncryptionKey(): Buffer {
+export function getSessionEncryptionKey(): Buffer {
   const configuredSecret = process.env.FSS_GMAIL_SESSION_SECRET;
   if (configuredSecret) {
     const key = Buffer.from(configuredSecret, "hex");

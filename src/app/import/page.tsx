@@ -2,6 +2,8 @@
 
 import { planBulkUndo } from "@/lib/bulk-undo";
 import { AlreadyImportedError } from "@/lib/already-imported";
+import { consolidateEvidenceToCandidates } from "@/lib/connectors/gmail-service";
+import { sha256Hex } from "@/lib/family-link";
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -10,6 +12,7 @@ import {
   BillingCycle,
   SubscriptionCategory,
   ConsolidatedSubscriptionCandidate,
+  DiscoveryEvidence,
   GmailHistoryRange,
   GmailScanCoverage,
 } from "@/types";
@@ -87,6 +90,10 @@ function ImportContent() {
 
   // Gmail Scanner state
   const [gmailScanning, setGmailScanning] = useState(false);
+  const [gmailProgress, setGmailProgress] = useState<{ checked: number; found: number; lane: string } | null>(null);
+  const [gmailResumeCursor, setGmailResumeCursor] = useState<string | null>(null);
+  const scanAbortRef = useRef<AbortController | null>(null);
+  const scanEvidenceRef = useRef<Map<string, DiscoveryEvidence>>(new Map());
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailConfigured, setGmailConfigured] = useState(false);
   const [gmailTokenAvailable, setGmailTokenAvailable] = useState(false);
@@ -368,8 +375,136 @@ function ImportContent() {
     }
   };
 
+  /**
+   * Live scan in server-timed batches. Candidates are rebuilt from all evidence after every batch,
+   * so they are reconciled and de-duplicated before anything can be saved. Saving is locked while
+   * the scan runs, and the person can stop it at any time.
+   */
+  const handleBatchedLiveScan = async (resumeCursor?: string) => {
+    setGmailScanning(true);
+    setErrorMessage("");
+    setGmailMessage("");
+    setGmailCoverage(null);
+    setGmailResumeCursor(null);
+    if (!resumeCursor) {
+      setGmailCandidates([]);
+      setSelectedGmailCandidateIds(new Set());
+      setDismissedCandidateIds(new Set());
+      scanEvidenceRef.current = new Map();
+    }
+    setGmailProgress({ checked: 0, found: 0, lane: "Starting" });
+    const controller = new AbortController();
+    scanAbortRef.current = controller;
+    let cursor: string | undefined = resumeCursor;
+    let resume = Boolean(resumeCursor);
+    let checkedTotal = 0;
+    try {
+      for (let batch = 0; batch < 400; batch += 1) {
+        const response = await fetch("/api/connectors/gmail/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            mode: "live",
+            batch: true,
+            cursor,
+            resume,
+            historyRange: selectedHistoryRange,
+          }),
+        });
+        resume = false;
+        const data = (await response.json()) as {
+          success: boolean;
+          error?: string;
+          done?: boolean;
+          truncated?: boolean;
+          resumable?: boolean;
+          cursor?: string;
+          evidence?: DiscoveryEvidence[];
+          progress?: { messagesChecked: number; lanes: { label: string; status: string }[] };
+          coverage?: GmailScanCoverage;
+          warnings?: string[];
+        };
+        if (!response.ok || !data.success) {
+          if (response.status === 401) {
+            setGmailConnected(false);
+            setGmailTokenAvailable(false);
+          }
+          throw new Error(data.error || "Could not scan Gmail.");
+        }
+        for (const ev of data.evidence ?? []) {
+          scanEvidenceRef.current.set(ev.message_id ?? ev.id, ev);
+        }
+        const all = Array.from(scanEvidenceRef.current.values());
+        const built = consolidateEvidenceToCandidates(all, subscriptions);
+        const withKeys = await Promise.all(
+          built.map(async (candidate) => ({
+            ...candidate,
+            import_key: (
+              await sha256Hex(
+                "import-v2|" +
+                  candidate.evidence
+                    .map((e) => e.message_id ?? e.id)
+                    .sort()
+                    .join(",")
+              )
+            ).slice(0, 40),
+          }))
+        );
+        setGmailCandidates(withKeys);
+        checkedTotal = data.progress?.messagesChecked ?? checkedTotal;
+        const activeLane =
+          data.progress?.lanes.find((l) => l.status === "not_started")?.label ?? "Finishing";
+        setGmailProgress({ checked: checkedTotal, found: withKeys.length, lane: activeLane });
+        cursor = data.cursor;
+        if (data.done) {
+          setSelectedGmailCandidateIds(
+            new Set(
+              withKeys
+                .filter(
+                  (c) =>
+                    c.status === "likely_active" &&
+                    c.renewal_state !== "cancelled" &&
+                    canBulkAddGmailCandidate(c)
+                )
+                .map((c) => c.id)
+            )
+          );
+          setGmailCoverage(data.coverage ?? null);
+          if (data.resumable && data.cursor) setGmailResumeCursor(data.cursor);
+          setGmailMessage(
+            [
+              withKeys.length > 0
+                ? `Found ${withKeys.length} likely subscription candidates from ${checkedTotal} keyword-matched emails (an email can match more than one search category). Review each before saving.`
+                : `Checked ${checkedTotal} keyword-matched emails but found no recurring subscription receipts.`,
+              ...(data.warnings ?? []),
+            ].join(" ")
+          );
+          requestAnimationFrame(() => {
+            gmailResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+          return;
+        }
+      }
+      throw new Error("The scan took too many steps and was stopped. Start a new scan.");
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") {
+        setGmailMessage(
+          `Scan stopped. ${scanEvidenceRef.current.size} matching emails were read so far; results below are partial and you can start a new scan.`
+        );
+      } else {
+        setErrorMessage(error instanceof Error ? error.message : "Network error scanning Gmail.");
+      }
+    } finally {
+      scanAbortRef.current = null;
+      setGmailScanning(false);
+      setGmailProgress(null);
+    }
+  };
+
   // 3. Scan Gmail (keyword-matched, recent messages only)
   const handleScanGmail = async (mode: "live" | "sandbox") => {
+    if (mode === "live") return handleBatchedLiveScan();
     setGmailScanning(true);
     setErrorMessage("");
     setGmailMessage("");
@@ -404,7 +539,7 @@ function ImportContent() {
 
       if (!response.ok || !data.success) {
         if (data.coverage) setGmailCoverage(data.coverage);
-        if (response.status === 401 && mode === "live") {
+        if (response.status === 401) {
           setGmailConnected(false);
           setGmailTokenAvailable(false);
         }
@@ -509,6 +644,7 @@ function ImportContent() {
 
   // Select Candidate for Review-Before-Save
   const handleReviewCandidate = (cand: ConsolidatedSubscriptionCandidate) => {
+    if (gmailScanning) return;
     setExtractedData({
       service_name: cand.service_name,
       plan_name: cand.plan_name || "Standard Plan",
@@ -572,6 +708,7 @@ function ImportContent() {
   };
 
   const handleSaveSelectedGmailCandidates = async () => {
+    if (gmailScanning) return;
     if (!hasConsented) {
       setErrorMessage("Please accept the privacy consent before saving imported data.");
       return;
@@ -936,6 +1073,44 @@ function ImportContent() {
             </button>
           </div>
 
+          {(gmailScanning || gmailResumeCursor) && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-xs text-indigo-900 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-100"
+            >
+              {gmailScanning && gmailProgress ? (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Scanning in batches: {gmailProgress.checked} matching emails read, {gmailProgress.found} candidates so far. Candidates may merge or change until the scan finishes, so saving is locked until then.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => scanAbortRef.current?.abort()}
+                    className="rounded-lg border border-indigo-300 px-3 py-1.5 font-semibold hover:bg-white dark:border-indigo-700"
+                  >
+                    Stop scan
+                  </button>
+                </div>
+              ) : (
+                gmailResumeCursor && (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      This run stopped at its safety limit. More matching mail remains, so results are partial. Continue to keep scanning from where it stopped.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleBatchedLiveScan(gmailResumeCursor)}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 font-semibold text-white hover:bg-indigo-700"
+                    >
+                      Continue scanning
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
           {/* Main Visual Dropzone (Screenshot OCR) */}
           <div className="bg-white dark:bg-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8 text-center transition hover:border-indigo-400 dark:hover:border-indigo-600 shadow-sm relative overflow-hidden group">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-sm group-hover:scale-105 transition-transform duration-200">
@@ -1012,7 +1187,7 @@ function ImportContent() {
                   Gmail Subscription Scan
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  A scan you start searches five subscription-related lanes, up to 200 unique matches from the selected window of up to 13 months. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
+                  A scan you start searches five subscription-related lanes, matching emails from the selected window of up to 13 months, read in batches of a few hundred with a safety limit of 2,000 emails per run (1,000 per category). If a limit is reached the scan tells you coverage is partial and you can continue; you can stop at any time. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
                 </p>
               </div>
 
@@ -1237,7 +1412,7 @@ function ImportContent() {
                   <button
                     type="button"
                     onClick={() => setSelectedGmailCandidateIds(new Set())}
-                    disabled={selectedGmailCandidateCount === 0 || bulkGmailSaving}
+                    disabled={selectedGmailCandidateCount === 0 || bulkGmailSaving || gmailScanning}
                     className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
                   >
                     Clear selection
@@ -1603,7 +1778,7 @@ function ImportContent() {
                 <button
                   type="button"
                   onClick={handleSaveSelectedGmailCandidates}
-                  disabled={selectedGmailCandidateCount === 0 || bulkGmailSaving}
+                  disabled={selectedGmailCandidateCount === 0 || bulkGmailSaving || gmailScanning}
                   className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition disabled:opacity-50"
                 >
                   {bulkGmailSaving
@@ -2031,7 +2206,7 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches up to 13 months across five subscription-related search categories, skips spam and trash, and processes no more than 200 unique matching messages. A match may contain unrelated text.
+                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches up to 13 months across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run (1,000 per category), then stops and offers to continue. Results are never described as the whole inbox. A match may contain unrelated text.
                 </li>
                 <li>
                   <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; aggregate scan coverage is saved to your account and retained until you delete your account. Withdrawing consent stops future scans but does not delete prior coverage. This does not mean message data never leaves your device or that Google limits the scope to recent messages.

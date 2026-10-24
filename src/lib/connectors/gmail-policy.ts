@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export const GMAIL_CONSENT_VERSION = "gmail-discovery-v2-13m";
+export const GMAIL_CONSENT_VERSION = "gmail-discovery-v3-batched";
 
 export type GmailMode = "disabled" | "test" | "public";
 

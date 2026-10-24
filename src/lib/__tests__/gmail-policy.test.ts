@@ -11,7 +11,7 @@ afterEach(() => {
 
 describe("Gmail release controls", () => {
   it("requires the updated consent version for the expanded history window", () => {
-    expect(GMAIL_CONSENT_VERSION).toBe("gmail-discovery-v2-13m");
+    expect(GMAIL_CONSENT_VERSION).toBe("gmail-discovery-v3-batched");
   });
 
   it("fails closed when the mode is missing or invalid", () => {
