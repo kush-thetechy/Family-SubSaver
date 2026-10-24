@@ -18,3 +18,4 @@ create policy "Users read their own payments" on public.payments for select
   using (user_id = (select auth.uid()));
 revoke all on public.payments from anon, authenticated;
 grant select on public.payments to authenticated;
+grant select, insert, update on public.payments to service_role;
