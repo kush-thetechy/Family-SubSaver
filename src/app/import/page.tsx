@@ -378,7 +378,8 @@ function ImportContent() {
   /**
    * Live scan in server-timed batches. Candidates are rebuilt from all evidence after every batch,
    * so they are reconciled and de-duplicated before anything can be saved. Saving is locked while
-   * the scan runs, and the person can stop it at any time.
+   * the scan runs. When the scan ends (done, stopped or failed) the server issues the import keys
+   * from the evidence it proved, so one source email can only be imported once.
    */
   const handleBatchedLiveScan = async (resumeCursor?: string) => {
     setGmailScanning(true);
@@ -395,8 +396,60 @@ function ImportContent() {
     setGmailProgress({ checked: 0, found: 0, lane: "Starting" });
     const controller = new AbortController();
     scanAbortRef.current = controller;
+    const warnBeforeLeave = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warnBeforeLeave);
+
+    const evidenceNow = () => Array.from(scanEvidenceRef.current.values());
+    const finalize = async (): Promise<ConsolidatedSubscriptionCandidate[]> => {
+      const built = consolidateEvidenceToCandidates(evidenceNow(), subscriptions);
+      let keys: (string | null)[] | null = null;
+      try {
+        const res = await fetch("/api/connectors/gmail/import-keys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            groups: built.map((c) => ({
+              evidence: c.evidence.map((e) => ({
+                key: e.message_id,
+                proof: scanEvidenceRef.current.get(e.message_id ?? "")?.key_proof,
+              })),
+            })),
+          }),
+        });
+        const data = (await res.json()) as { success: boolean; keys?: (string | null)[] };
+        if (res.ok && data.success && data.keys?.length === built.length) keys = data.keys;
+      } catch {
+        keys = null;
+      }
+      const withKeys = built.map((c, i) => ({ ...c, import_key: keys?.[i] ?? undefined }));
+      setGmailCandidates(withKeys);
+      if (!keys) {
+        setErrorMessage(
+          "Candidates were found but could not be verified for duplicate protection. Run the scan again before saving."
+        );
+        setSelectedGmailCandidateIds(new Set());
+      } else {
+        setSelectedGmailCandidateIds(
+          new Set(
+            withKeys
+              .filter(
+                (c) =>
+                  c.status === "likely_active" &&
+                  c.renewal_state !== "cancelled" &&
+                  canBulkAddGmailCandidate(c)
+              )
+              .map((c) => c.id)
+          )
+        );
+      }
+      return withKeys;
+    };
+
     let cursor: string | undefined = resumeCursor;
     let resume = Boolean(resumeCursor);
+    let lastGoodCursor: string | undefined = resumeCursor;
     let checkedTotal = 0;
     try {
       for (let batch = 0; batch < 400; batch += 1) {
@@ -417,7 +470,6 @@ function ImportContent() {
           success: boolean;
           error?: string;
           done?: boolean;
-          truncated?: boolean;
           resumable?: boolean;
           cursor?: string;
           evidence?: DiscoveryEvidence[];
@@ -430,53 +482,29 @@ function ImportContent() {
             setGmailConnected(false);
             setGmailTokenAvailable(false);
           }
-          throw new Error(data.error || "Could not scan Gmail.");
+          const err = new Error(data.error || "Could not scan Gmail.") as Error & { status?: number };
+          err.status = response.status;
+          throw err;
         }
         for (const ev of data.evidence ?? []) {
           scanEvidenceRef.current.set(ev.message_id ?? ev.id, ev);
         }
-        const all = Array.from(scanEvidenceRef.current.values());
-        const built = consolidateEvidenceToCandidates(all, subscriptions);
-        const withKeys = await Promise.all(
-          built.map(async (candidate) => ({
-            ...candidate,
-            import_key: (
-              await sha256Hex(
-                "import-v2|" +
-                  candidate.evidence
-                    .map((e) => e.message_id ?? e.id)
-                    .sort()
-                    .join(",")
-              )
-            ).slice(0, 40),
-          }))
-        );
-        setGmailCandidates(withKeys);
         checkedTotal = data.progress?.messagesChecked ?? checkedTotal;
-        const activeLane =
-          data.progress?.lanes.find((l) => l.status === "not_started")?.label ?? "Finishing";
-        setGmailProgress({ checked: checkedTotal, found: withKeys.length, lane: activeLane });
+        const interim = consolidateEvidenceToCandidates(evidenceNow(), subscriptions);
+        setGmailCandidates(interim.map((c) => ({ ...c, import_key: undefined })));
+        const openLane = data.progress?.lanes.find((l) => l.status === "not_started")?.label ?? "Finishing";
+        setGmailProgress({ checked: checkedTotal, found: interim.length, lane: openLane });
         cursor = data.cursor;
+        lastGoodCursor = data.cursor ?? lastGoodCursor;
         if (data.done) {
-          setSelectedGmailCandidateIds(
-            new Set(
-              withKeys
-                .filter(
-                  (c) =>
-                    c.status === "likely_active" &&
-                    c.renewal_state !== "cancelled" &&
-                    canBulkAddGmailCandidate(c)
-                )
-                .map((c) => c.id)
-            )
-          );
+          const finalCandidates = await finalize();
           setGmailCoverage(data.coverage ?? null);
           if (data.resumable && data.cursor) setGmailResumeCursor(data.cursor);
           setGmailMessage(
             [
-              withKeys.length > 0
-                ? `Found ${withKeys.length} likely subscription candidates from ${checkedTotal} keyword-matched emails (an email can match more than one search category). Review each before saving.`
-                : `Checked ${checkedTotal} keyword-matched emails but found no recurring subscription receipts.`,
+              finalCandidates.length > 0
+                ? `Found ${finalCandidates.length} likely subscription candidates from ${checkedTotal} unique emails read (each email is counted once, even if it matched several search categories). Review each before saving.`
+                : `Read ${checkedTotal} unique emails but found no recurring subscription receipts.`,
               ...(data.warnings ?? []),
             ].join(" ")
           );
@@ -488,14 +516,28 @@ function ImportContent() {
       }
       throw new Error("The scan took too many steps and was stopped. Start a new scan.");
     } catch (error) {
+      const partial = scanEvidenceRef.current.size > 0;
+      if (partial) await finalize();
       if ((error as Error)?.name === "AbortError") {
+        // The batch in flight was abandoned; the last completed batch's position is still valid,
+        // so Continue re-reads from there and nothing is skipped.
+        if (lastGoodCursor) setGmailResumeCursor(lastGoodCursor);
         setGmailMessage(
-          `Scan stopped. ${scanEvidenceRef.current.size} matching emails were read so far; results below are partial and you can start a new scan.`
+          `Scan stopped. Results below are partial: only the ${scanEvidenceRef.current.size} matching emails read so far are included.` +
+            (lastGoodCursor ? " You can continue from where it stopped (within 30 minutes)." : " Start a new scan to read the rest.")
         );
       } else {
-        setErrorMessage(error instanceof Error ? error.message : "Network error scanning Gmail.");
+        const status = (error as { status?: number })?.status;
+        const base = error instanceof Error ? error.message : "Network error scanning Gmail.";
+        setErrorMessage(
+          partial
+            ? `${base} The results below are partial (${scanEvidenceRef.current.size} matching emails read before the scan stopped).` +
+                (status === 400 ? " Starting a new scan uses one of today's scans." : "")
+            : base
+        );
       }
     } finally {
+      window.removeEventListener("beforeunload", warnBeforeLeave);
       scanAbortRef.current = null;
       setGmailScanning(false);
       setGmailProgress(null);
@@ -1082,7 +1124,7 @@ function ImportContent() {
               {gmailScanning && gmailProgress ? (
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
-                    Scanning in batches: {gmailProgress.checked} matching emails read, {gmailProgress.found} candidates so far. Candidates may merge or change until the scan finishes, so saving is locked until then.
+                    Scanning in batches: {gmailProgress.checked} unique emails read, {gmailProgress.found} candidates so far. Candidates may merge or change until the scan finishes, so saving is locked until then.
                   </span>
                   <button
                     type="button"
@@ -1096,7 +1138,7 @@ function ImportContent() {
                 gmailResumeCursor && (
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span>
-                      This run stopped at its safety limit. More matching mail remains, so results are partial. Continue to keep scanning from where it stopped.
+                      This scan stopped before reading all matching mail, so results are partial. Continue to keep scanning from where it stopped; leaving or refreshing this page loses the results shown here.
                     </span>
                     <button
                       type="button"
@@ -1187,7 +1229,7 @@ function ImportContent() {
                   Gmail Subscription Scan
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  A scan you start searches five subscription-related lanes, matching emails from the selected window of up to 13 months, read in batches of a few hundred with a safety limit of 2,000 emails per run (1,000 per category). If a limit is reached the scan tells you coverage is partial and you can continue; you can stop at any time. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
+                  A scan you start searches five subscription-related lanes, matching emails from the selected window of up to 13 months, read in batches, each email counted once. A run reads up to 2,000 emails and a whole scan up to 10,000. If a limit is reached the scan tells you coverage is partial and, for the per-run limit, lets you continue; you can stop at any time. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
                 </p>
               </div>
 
@@ -2206,7 +2248,7 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches up to 13 months across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run (1,000 per category), then stops and offers to continue. Results are never described as the whole inbox. A match may contain unrelated text.
+                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches up to 13 months across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run and 10,000 per scan, then stops and says coverage is partial. Results are never described as the whole inbox. A match may contain unrelated text.
                 </li>
                 <li>
                   <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; aggregate scan coverage is saved to your account and retained until you delete your account. Withdrawing consent stops future scans but does not delete prior coverage. This does not mean message data never leaves your device or that Google limits the scope to recent messages.

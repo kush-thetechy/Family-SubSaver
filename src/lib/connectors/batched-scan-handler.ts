@@ -4,10 +4,11 @@ import { DiscoveryEvidence, GmailHistoryRange, GmailScanCoverage } from "@/types
 import {
   GmailBatchState,
   newGmailBatchState,
+  resumeGmailBatchState,
   runGmailBatch,
 } from "./gmail-batch";
 import { openScanCursor, sealScanCursor } from "./scan-cursor";
-import { computeImportKey } from "./import-key";
+import { evidenceKey, evidenceProof } from "./import-key";
 import { getGmailHistoryWindow, MAX_GMAIL_SCANS_PER_DAY } from "./gmail-service";
 import { clearSessionCookie, setSessionCookie, ServerUserSession } from "./server-token-store";
 
@@ -15,9 +16,10 @@ const NO_STORE = { "Cache-Control": "no-store" };
 
 /** Evidence for the signed-in person's own browser. No message ids, senders, subjects or ids. */
 export function sanitizeBatchEvidence(userId: string, ev: DiscoveryEvidence): DiscoveryEvidence {
-  const key = computeImportKey(userId, [ev.message_id]);
+  const key = ev.message_id ? evidenceKey(userId, ev.message_id) : undefined;
   return {
     id: `ev-${key ?? "unknown"}`,
+    key_proof: key ? evidenceProof(userId, key) : undefined,
     source: "gmail",
     evidence_type: ev.evidence_type,
     message_id: key,
@@ -102,7 +104,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
       );
     }
     state = opened;
-    if (a.resume) state = { ...state, runFetched: 0 };
+    if (a.resume) state = resumeGmailBatchState(state);
   }
 
   const result = await runGmailBatch(a.accessToken, state);
@@ -131,7 +133,9 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
   let coverage: GmailScanCoverage | undefined;
   if (result.done) {
     coverage = coverageFromState(s, result.truncated);
-    const { data: coverageId, error } = await a.supabase.rpc("record_own_gmail_scan_coverage", {
+    const { data: coverageId, error } = await a.supabase.rpc("record_own_gmail_scan_coverage_once", {
+      p_scan_id: s.scanId,
+      p_run_no: s.runNo,
       p_history_range: coverage.historyRange,
       p_window_start: coverage.windowStart,
       p_window_end: coverage.windowEnd,
@@ -157,7 +161,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
     warnings.push("Attachments are not fetched or parsed; coverage applies only to searchable message content.");
   }
 
-  const resumable = result.done && result.truncated && s.lane < s.lanes.length && !s.fatalStatus;
+  const resumable = result.resumable;
   const response = NextResponse.json(
     {
       success: true,
@@ -169,7 +173,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
       cursor: !result.done || resumable ? sealScanCursor(a.userId, s) : undefined,
       resumable,
       progress: {
-        messagesChecked: s.attempted,
+        messagesChecked: s.attempted, uniqueSelected: s.selected,
         lanes: s.lanes.map((l) => ({ label: l.label, status: l.status, pagesFetched: l.pagesFetched, messagesMatched: l.messagesMatched })),
       },
       coverage,

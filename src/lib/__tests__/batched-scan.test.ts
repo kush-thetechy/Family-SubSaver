@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  GMAIL_LANE_MESSAGE_CEILING,
   GMAIL_RUN_MESSAGE_CEILING,
+  GMAIL_TOTAL_MESSAGE_CEILING,
   newGmailBatchState,
+  resumeGmailBatchState,
   runGmailBatch,
   type GmailBatchState,
 } from "../connectors/gmail-batch";
 import { buildGmailDateFilter, buildGmailLanes, setGmailRetryDelaysForTests } from "../connectors/gmail-service";
 import { openScanCursor, sealScanCursor } from "../connectors/scan-cursor";
 import { sanitizeBatchEvidence } from "../connectors/batched-scan-handler";
+import { computeImportKey, importKeyFromEvidenceKeys, verifyEvidenceProof } from "../connectors/import-key";
 
 function json(payload: unknown, status = 200): Response {
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
@@ -25,7 +27,7 @@ function json(payload: unknown, status = 200): Response {
 const laneQueries = buildGmailLanes(buildGmailDateFilter("13m")).map((l) => l.query);
 
 /** Fake Gmail: each lane has `perLane` messages, 100 per page. */
-function installGmail(perLane: number, opts: { flaky429?: boolean } = {}) {
+function installGmail(perLane: number, opts: { flaky429?: boolean; shared?: number; slow429Ms?: number } = {}) {
   let rateLimitedOnce = false;
   const calls = { list: 0, get: 0, maxParallel: 0 };
   let inFlight = 0;
@@ -38,9 +40,15 @@ function installGmail(perLane: number, opts: { flaky429?: boolean } = {}) {
       const n = Math.max(0, Math.min(100, perLane - offset));
       const next = offset + n < perLane ? String(offset + n) : undefined;
       return json({
-        messages: Array.from({ length: n }, (_, i) => ({ id: `L${lane}-M${offset + i}` })),
+        messages: Array.from({ length: n }, (_, i) => ({
+          id: offset + i < (opts.shared ?? 0) ? `S-M${offset + i}` : `L${lane}-M${offset + i}`,
+        })),
         ...(next ? { nextPageToken: next } : {}),
       });
+    }
+    if (opts.slow429Ms) {
+      await new Promise((r) => setTimeout(r, opts.slow429Ms));
+      return json({ error: { message: "rate" } }, 429);
     }
     if (opts.flaky429 && !rateLimitedOnce) {
       rateLimitedOnce = true;
@@ -96,24 +104,73 @@ describe("resumable batched scan", () => {
     expect(last.truncated).toBe(false);
   });
 
-  it("does not let one busy lane starve the rest (per-lane ceiling)", async () => {
-    installGmail(GMAIL_LANE_MESSAGE_CEILING + 400);
-    const { last } = await runAll(newGmailBatchState("13m"));
-    // The first lane stops at its ceiling and is reported truncated; later lanes still start.
-    expect(last.state.lanes[0].status).toBe("truncated");
-    expect(last.state.lanes.slice(1).some((l) => l.pagesFetched > 0)).toBe(true);
-    expect(last.truncated).toBe(true);
+  it("lists lanes round-robin so a busy lane cannot starve the others", async () => {
+    installGmail(5000);
+    const first = await runGmailBatch("tok", newGmailBatchState("13m"), { budgetMs: 0 });
+    expect(first.state.lanes.every((l) => l.pagesFetched === 0)).toBe(true);
+    let state = newGmailBatchState("13m");
+    // Stop at the run ceiling: every lane must have been read by then.
+    const { last } = await runAll(state);
+    expect(last.state.lanes.every((l) => l.pagesFetched > 0)).toBe(true);
+    const pages = last.state.lanes.map((l) => l.pagesFetched);
+    expect(Math.max(...pages) - Math.min(...pages)).toBeLessThanOrEqual(1);
   });
 
-  it("stops at the run ceiling, reports truncation, and can resume", async () => {
-    installGmail(900);
-    let { last } = await runAll(newGmailBatchState("13m"));
-    expect(last.state.runFetched).toBeGreaterThanOrEqual(GMAIL_RUN_MESSAGE_CEILING);
-    expect(last.truncated).toBe(true);
-    expect(last.state.lane).toBeLessThan(laneQueries.length);
-    const lanePos = last.state.lane;
-    const resumed = await runAll({ ...last.state, runFetched: 0 });
-    expect(resumed.last.state.lane).toBeGreaterThan(lanePos);
+  it("counts a message matched by several lanes once", async () => {
+    installGmail(100, { shared: 60 });
+    const { last } = await runAll(newGmailBatchState("13m"));
+    const lanes = laneQueries.length;
+    const matched = last.state.lanes.reduce((t, l) => t + l.messagesMatched, 0);
+    expect(matched).toBe(100 * lanes);
+    expect(last.state.selected).toBe(60 + 40 * lanes);
+    expect(last.state.attempted).toBe(60 + 40 * lanes);
+    expect(last.state.lanes.reduce((t, l) => t + l.uniqueMessagesSelected, 0)).toBe(60 + 40 * lanes);
+  });
+
+  it("stops at the run ceiling as resumable, and Continue goes past it without skipping or repeating", async () => {
+    const calls = installGmail(900);
+    const run1 = await runAll(newGmailBatchState("13m"));
+    expect(run1.last.truncated).toBe(true);
+    expect(run1.last.resumable).toBe(true);
+    expect(run1.last.state.runFetched).toBeGreaterThanOrEqual(GMAIL_RUN_MESSAGE_CEILING);
+    expect(run1.last.state.pending).toHaveLength(0);
+    let state = run1.last.state;
+    let last = run1.last;
+    const evidence = [...run1.evidence];
+    let runs = 1;
+    while (last.resumable && runs < 10) {
+      const r = await runAll(resumeGmailBatchState(state));
+      last = r.last;
+      state = last.state;
+      evidence.push(...r.evidence);
+      runs += 1;
+    }
+    // 900 x lanes exceeds two runs of 2,000, so Continue was used more than once.
+    expect(runs).toBeGreaterThanOrEqual(3);
+    expect(state.runNo).toBe(runs);
+    expect(last.done).toBe(true);
+    expect(last.truncated).toBe(false);
+    // Every message in every lane was fetched exactly once across all runs.
+    expect(state.fetched).toBe(900 * laneQueries.length);
+    expect(calls.get).toBe(900 * laneQueries.length);
+    const keys = evidence.map((e) => e.message_id);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("stops for good at the total ceiling and does not offer to resume", async () => {
+    installGmail(GMAIL_TOTAL_MESSAGE_CEILING);
+    let state = newGmailBatchState("13m");
+    let last;
+    for (let i = 0; i < 12; i += 1) {
+      const r = await runAll(i === 0 ? state : resumeGmailBatchState(state));
+      last = r.last;
+      state = last.state;
+      if (!last.resumable) break;
+    }
+    expect(last!.state.totalCeilingHit).toBe(true);
+    expect(last!.resumable).toBe(false);
+    expect(last!.truncated).toBe(true);
+    expect(last!.state.selected).toBeGreaterThanOrEqual(GMAIL_TOTAL_MESSAGE_CEILING);
   });
 
   it("is time-boxed: a tiny budget yields partial progress with a continuing state", async () => {
@@ -135,6 +192,17 @@ describe("resumable batched scan", () => {
     expect(last.state.failures).toBe(0);
   });
 
+  it("slow 429s: the hard deadline stops retry sleeps and unread ids stay pending, never dropped", async () => {
+    setGmailRetryDelaysForTests([30, 30, 30]);
+    installGmail(30, { slow429Ms: 20 });
+    // Listing works (list calls are not rate limited); fetches are slow 429s. Hard deadline 120ms.
+    const r = await runGmailBatch("tok", newGmailBatchState("13m"), { budgetMs: 5_000, hardMs: 120 });
+    expect(r.done).toBe(false);
+    expect(r.state.pending.length).toBeGreaterThan(0);
+    // listed = attempted + still pending: nothing silently lost
+    expect(r.state.attempted + r.state.pending.length).toBe(r.state.selected);
+  });
+
   it("treats a 401 as fatal and stops", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({}, 401)));
     const r = await runGmailBatch("tok", newGmailBatchState("13m"));
@@ -146,10 +214,20 @@ describe("resumable batched scan", () => {
 describe("scan cursor", () => {
   const state = newGmailBatchState("13m");
   it("round-trips for the same user and hides its contents", () => {
-    const withToken = { ...state, pageToken: "SECRET-PAGE-TOKEN", lane: 2 };
+    const withToken = { ...state, tokens: ["SECRET-PAGE-TOKEN", "", "", "", ""], pending: ["RAWPENDINGID"], next: 2 };
     const c = sealScanCursor("u1", withToken);
-    expect(Buffer.from(c, "base64url").toString("latin1")).not.toContain("SECRET-PAGE-TOKEN");
-    expect(openScanCursor("u1", c)?.pageToken).toBe("SECRET-PAGE-TOKEN");
+    const raw = Buffer.from(c, "base64url").toString("latin1");
+    expect(raw).not.toContain("SECRET-PAGE-TOKEN");
+    expect(raw).not.toContain("RAWPENDINGID");
+    expect(openScanCursor("u1", c)?.tokens[0]).toBe("SECRET-PAGE-TOKEN");
+    expect(openScanCursor("u1", c)?.pending).toEqual(["RAWPENDINGID"]);
+  });
+  it("stays small at the total ceiling", () => {
+    let seen = "";
+    for (let i = 0; i < GMAIL_TOTAL_MESSAGE_CEILING; i += 1) seen += (i * 2654435761 % 2 ** 48).toString(16).padStart(12, "0");
+    const c = sealScanCursor("u1", { ...state, seen });
+    expect(c.length).toBeLessThan(200_000);
+    expect(openScanCursor("u1", c)?.seen.length).toBe(seen.length);
   });
   it("rejects another user, tampering, expiry and garbage", () => {
     const c = sealScanCursor("u1", state, 1_000_000);
@@ -166,7 +244,7 @@ describe("scan cursor", () => {
 });
 
 describe("evidence sent to the browser", () => {
-  it("has no message ids, sender, subject or card digits", () => {
+  it("has no message ids, sender, subject or card digits, and carries a verifiable proof", () => {
     const out = sanitizeBatchEvidence("u1", {
       id: "gmail-gen-RAWID123",
       source: "gmail",
@@ -183,5 +261,13 @@ describe("evidence sent to the browser", () => {
     const text = JSON.stringify(out);
     expect(text).not.toMatch(/RAWID123|info@netflix|Receipt|4242|MANDATE-9/);
     expect(out.message_id).toMatch(/^[0-9a-f]{40}$/);
+    expect(verifyEvidenceProof("u1", out.message_id!, out.key_proof)).toBe(true);
+    expect(verifyEvidenceProof("u2", out.message_id!, out.key_proof)).toBe(false);
+  });
+  it("single-shot and batched paths give the same import key for the same emails", () => {
+    const a = sanitizeBatchEvidence("u1", { id: "x", source: "gmail", evidence_type: "payment", message_id: "M1" } as never);
+    const b = sanitizeBatchEvidence("u1", { id: "y", source: "gmail", evidence_type: "payment", message_id: "M2" } as never);
+    expect(importKeyFromEvidenceKeys("u1", [b.message_id, a.message_id])).toBe(computeImportKey("u1", ["M1", "M2"]));
+    expect(importKeyFromEvidenceKeys("u2", [a.message_id, b.message_id])).not.toBe(computeImportKey("u1", ["M1", "M2"]));
   });
 });
