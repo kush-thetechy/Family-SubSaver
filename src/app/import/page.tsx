@@ -81,6 +81,26 @@ function ImportContent() {
   const { currentProfile, household, subscriptions, addSubscription, deleteSubscription } = useApp();
 
   const [hasConsented, setHasConsented] = useState(false);
+  // Soft trial gate (server-flagged): when set, NEW scans/imports are blocked with this
+  // message. Existing data, export and deletion stay available. Empty while gate is off.
+  const [captureBlock, setCaptureBlock] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/billing/entitlement", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (!cancelled && body?.newCaptureBlocked && typeof body.message === "string") {
+          setCaptureBlock(body.message);
+        }
+      })
+      .catch(() => {
+        // Gate status is best-effort; a fetch failure must never block an import.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStatus, setOcrStatus] = useState("");
@@ -213,6 +233,10 @@ function ImportContent() {
     if (selectedFiles.length === 0) return;
     if (!hasConsented) {
       setErrorMessage("Please accept the privacy consent before importing data.");
+      return;
+    }
+    if (captureBlock) {
+      setErrorMessage(captureBlock);
       return;
     }
     if (selectedFiles.length > MAX_SCREENSHOTS_PER_IMPORT) {
@@ -384,6 +408,10 @@ function ImportContent() {
    * from the evidence it proved, so one source email can only be imported once.
    */
   const handleBatchedLiveScan = async (resumeCursor?: string) => {
+    if (captureBlock) {
+      setErrorMessage(captureBlock);
+      return;
+    }
     setGmailScanning(true);
     setErrorMessage("");
     setGmailMessage("");
@@ -1156,6 +1184,12 @@ function ImportContent() {
             </div>
           )}
 
+          {captureBlock ? (
+            <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 p-4 text-sm text-amber-900 dark:text-amber-200">
+              <p>{captureBlock}</p>
+              <Link href="/pricing" className="font-semibold underline">Pay Rs 60</Link>
+            </div>
+          ) : null}
           {/* Main Visual Dropzone (Screenshot OCR) */}
           <div className="bg-white dark:bg-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8 text-center transition hover:border-indigo-400 dark:hover:border-indigo-600 shadow-sm relative overflow-hidden group">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-sm group-hover:scale-105 transition-transform duration-200">

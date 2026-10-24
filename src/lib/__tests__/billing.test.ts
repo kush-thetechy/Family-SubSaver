@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { computeEntitlement, getBillingConfig, type Milestone } from "../billing";
+import { computeEntitlement, getBillingConfig, isNewCaptureBlocked, type Milestone } from "../billing";
 
 const m = (first_at: string, seen = 3): Milestone => ({ kind: "gmail_scan_viewed", first_at, live_subscriptions_seen: seen });
-const on = { enabled: true, trialDays: 30, amountPaise: 6000 };
+const on = { enabled: true, feeGateEnabled: false, trialDays: 30, amountPaise: 6000 };
 
 describe("billing scaffold", () => {
   it("is disabled by default and never asks for a fee", () => {
@@ -28,5 +28,25 @@ describe("billing scaffold", () => {
   it("reads the trial length from settings", () => {
     expect(getBillingConfig({ NEXT_PUBLIC_BILLING_ENABLED: "true", NEXT_PUBLIC_BILLING_TRIAL_DAYS: "14" })).toMatchObject({ enabled: true, trialDays: 14 });
     expect(getBillingConfig({ NEXT_PUBLIC_BILLING_TRIAL_DAYS: "abc" }).trialDays).toBe(30);
+  });
+});
+
+describe("soft fee gate flag", () => {
+  it("is off by default and requires billing enabled", () => {
+    expect(getBillingConfig({}).feeGateEnabled).toBe(false);
+    expect(getBillingConfig({ NEXT_PUBLIC_FEE_GATE_ENABLED: "true" }).feeGateEnabled).toBe(false);
+    expect(getBillingConfig({ NEXT_PUBLIC_BILLING_ENABLED: "true", NEXT_PUBLIC_FEE_GATE_ENABLED: "true" }).feeGateEnabled).toBe(true);
+  });
+  it("blocks new capture only when the flag is on and the fee is due", () => {
+    const gated = { ...on, feeGateEnabled: true };
+    const due = computeEntitlement([m("2026-10-01T00:00:00Z")], null, on, new Date("2026-11-01T00:00:00Z"));
+    const trial = computeEntitlement([m("2026-10-01T00:00:00Z")], null, on, new Date("2026-10-20T00:00:00Z"));
+    const paid = computeEntitlement([m("2026-10-01T00:00:00Z")], "2026-10-02T00:00:00Z", on, new Date("2026-11-01T00:00:00Z"));
+    expect(isNewCaptureBlocked(due, gated)).toBe(true);
+    expect(isNewCaptureBlocked(due, on)).toBe(false); // flag off: never blocks
+    expect(isNewCaptureBlocked(trial, gated)).toBe(false);
+    expect(isNewCaptureBlocked(paid, gated)).toBe(false);
+    expect(isNewCaptureBlocked({ state: "billing_disabled" }, gated)).toBe(false);
+    expect(isNewCaptureBlocked({ state: "not_started" }, gated)).toBe(false);
   });
 });
