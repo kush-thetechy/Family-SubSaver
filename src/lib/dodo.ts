@@ -41,36 +41,46 @@ export async function createDodoCheckout(
   return { sessionId: body.session_id, checkoutUrl: body.checkout_url };
 }
 
-export interface PaymentRecord {
-  paymentId: string;
-  userId: string;
-  amountMinor: number;
-  currency: string;
-  status: "paid" | "failed";
-  occurredAt: string;
+export type DodoMode = "test" | "live";
+
+export function getDodoMode(env: Record<string, string | undefined> = process.env): DodoMode {
+  return env.DODO_MODE === "live" ? "live" : "test";
 }
+
+/** In test mode only listed user ids may start a checkout, so simulated payments stay with the owner. */
+export function canStartCheckout(userId: string, env: Record<string, string | undefined> = process.env): boolean {
+  if (getDodoMode(env) === "live") return true;
+  return (env.BILLING_TEST_USER_IDS ?? "").split(",").map((x) => x.trim()).filter(Boolean).includes(userId);
+}
+
+export type DodoEvent =
+  | { kind: "payment"; paymentId: string; sessionId: string; userId: string; amountMinor: number; currency: string; status: "paid" | "failed"; occurredAt: string }
+  | { kind: "refund"; paymentId: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Reduces a verified Dodo payment event to the minimum we store. Anything else in the payload
+ * Reduces a verified Dodo event to the minimum we use. Everything else in the payload
  * (customer, billing, card fields) is dropped here and never logged or persisted.
- * Returns null for events we do not record.
+ * A paid payment must be INR and exactly the approved fee. Returns null for events we ignore.
  */
-export function toPaymentRecord(raw: unknown): PaymentRecord | null {
+export function toDodoEvent(raw: unknown): DodoEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const evt = raw as { type?: unknown; timestamp?: unknown; data?: Record<string, unknown> };
-  const status = evt.type === "payment.succeeded" ? "paid" : evt.type === "payment.failed" ? "failed" : null;
   const d = evt.data;
-  if (!status || !d || typeof d !== "object") return null;
+  if (!d || typeof d !== "object") return null;
+  const paymentId = typeof d.payment_id === "string" ? d.payment_id : "";
+  if (!paymentId) return null;
+  if (evt.type === "refund.succeeded") return { kind: "refund", paymentId };
+  const status = evt.type === "payment.succeeded" ? "paid" : evt.type === "payment.failed" ? "failed" : null;
+  if (!status) return null;
   const metadata = d.metadata as Record<string, unknown> | undefined;
   const userId = typeof metadata?.user_id === "string" ? metadata.user_id : "";
-  const paymentId = typeof d.payment_id === "string" ? d.payment_id : "";
+  const sessionId = typeof d.checkout_session_id === "string" ? d.checkout_session_id : "";
   const amount = typeof d.total_amount === "number" ? d.total_amount : NaN;
   const currency = typeof d.currency === "string" ? d.currency.toUpperCase() : "";
-  // A paid record must match the approved fee exactly (INR, Rs 60 total); anything else is not recorded.
   if (status === "paid" && (currency !== "INR" || amount !== FEE_AMOUNT_PAISE)) return null;
-  if (!UUID.test(userId) || !paymentId || !Number.isInteger(amount) || amount <= 0 || currency.length !== 3) return null;
+  if (!UUID.test(userId) || !sessionId || !Number.isInteger(amount) || amount <= 0 || currency.length !== 3) return null;
   const when = typeof evt.timestamp === "string" && !Number.isNaN(Date.parse(evt.timestamp)) ? evt.timestamp : new Date().toISOString();
-  return { paymentId, userId, amountMinor: amount, currency, status, occurredAt: when };
+  return { kind: "payment", paymentId, sessionId, userId, amountMinor: amount, currency, status, occurredAt: when };
 }

@@ -20,7 +20,8 @@ export function getLegalConfig(env: Record<string, string | undefined> = process
     contact,
     refundDays: Number.isFinite(days) && days >= 0 && env.NEXT_PUBLIC_REFUND_WINDOW_DAYS ? Math.floor(days) : null,
     priceRupees: 60,
-    billingLive: env.NEXT_PUBLIC_BILLING_ENABLED === "true",
+    // Live only when the owner switches live mode on; test-mode checkout never counts as open.
+    billingLive: env.NEXT_PUBLIC_BILLING_ENABLED === "true" && env.NEXT_PUBLIC_BILLING_LIVE === "true",
   };
 }
 
