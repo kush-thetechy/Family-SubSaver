@@ -16,6 +16,7 @@ export default function LoginPage({
   const [mode, setMode] = useState<"sign_in" | "sign_up" | "reset">("sign_in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState(
     typeof searchParams?.error === "string" ? searchParams.error : ""
@@ -24,11 +25,19 @@ export default function LoginPage({
   const [warning, setWarning] = useState(
     typeof searchParams?.warning === "string" ? searchParams.warning : ""
   );
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(
+    typeof searchParams?.message === "string" ? searchParams.message.slice(0, 200) : ""
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // Read what is actually in the fields, not React state: browser autofill can fill an input
+    // without firing the change event that keeps state in sync.
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "");
+    const password = String(form.get("password") ?? "");
+    const name = String(form.get("name") ?? "");
     setError("");
     setMessage("");
     setWarning("");
@@ -152,6 +161,7 @@ export default function LoginPage({
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
               Name
               <input
+                name="name"
                 autoComplete="name"
                 required
                 value={name}
@@ -164,6 +174,7 @@ export default function LoginPage({
             Email
             <input
               type="email"
+              name="email"
               autoComplete="email"
               required
               value={email}
@@ -175,7 +186,11 @@ export default function LoginPage({
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
             Password
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
+              name="password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               autoComplete={mode === "sign_in" ? "current-password" : "new-password"}
               minLength={8}
               required
@@ -183,6 +198,10 @@ export default function LoginPage({
               onChange={(event) => setPassword(event.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800"
             />
+            <span className="mt-2 flex items-center gap-2 text-xs font-normal">
+              <input type="checkbox" checked={showPassword} onChange={(e) => setShowPassword(e.target.checked)} />
+              Show password
+            </span>
           </label>
           )}
           <button
