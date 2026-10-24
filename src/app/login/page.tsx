@@ -69,18 +69,9 @@ export default function LoginPage({
         });
 
         if (signUpError) throw signUpError;
-        // With email confirmation on, Supabase answers a sign-up for an address that already has
-        // an account with a user that has no identities, and sends no email. Say so honestly.
-        if (!data.session && data.user && (data.user.identities?.length ?? 1) === 0) {
-          setMode("sign_in");
-          setError(
-            "An account with this email already exists, so no new confirmation email was sent. Sign in instead, or use \"Forgot password?\" to reset it."
-          );
-          return;
-        }
         if (!data.session) {
           setMessage(
-            "Your account was created. Check your email to confirm it, then return here to sign in."
+            "Check your email (and spam) for a confirmation link, then return here to sign in. If you already registered with this address, no new email is sent: use Sign in, or Forgot password to reset it."
           );
           return;
         }
