@@ -13,7 +13,7 @@ export default function Page() {
             <li>Subscriptions you save: service, plan, category, price, billing cycle, renewal date, who pays, billing channel, notes and visibility.</li>
             <li>Household name and members, invitation links (stored as a hash, single use, expire after 7 days).</li>
             <li>Your Gmail consent record and scan coverage counts. No email content.</li>
-            <li>Payment status for the one-time fee (order and payment ids and amount). Card, UPI and bank details are handled by our payment provider, Dodo Payments, and never reach us.</li>
+            <li>Payment record for the one-time fee: payment id, amount, currency, status and date, received from our payment provider, Dodo Payments. We do not receive or store your full card number, UPI PIN or bank login. Dodo Payments sends us a confirmation that can include your name, email, billing country and the last four card digits; we keep only the fields listed here.</li>
           </ul>
           <h2 className="font-semibold">Gmail, only if you connect it</h2>
           <ul className="list-disc pl-5">
