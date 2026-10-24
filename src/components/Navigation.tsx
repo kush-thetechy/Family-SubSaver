@@ -45,7 +45,7 @@ export function Navigation() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setReviewCount(d && typeof d.pending === "number" ? d.pending : 0))
       .catch(() => setReviewCount(0));
-  }, [authUser]);
+  }, [authUser, pathname]);
 
   const navLinks = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
