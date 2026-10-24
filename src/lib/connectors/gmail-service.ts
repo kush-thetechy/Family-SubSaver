@@ -822,6 +822,23 @@ const AMOUNT_LABEL_NEAR =
 const NON_PAYMENT_AMOUNT =
   /(?:stipend|salary|ctc|lpa|prize|reimburs|scholarship|bounty|funding|valuation|crore|lakh|billion|million|hiring|internship|per month!)/i;
 
+
+/** First INR amount that is tied to payment words and is not a market figure (crore, stipend, ...). */
+export function findPaymentAmount(text: string): number | undefined {
+  const re = /(?:₹|INR|Rs\.?)\s*([0-9][\d,]*(?:\.\d{1,2})?)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const value = Number(m[1].replace(/,/g, ""));
+    if (!Number.isFinite(value) || value <= 0) continue;
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 24);
+    if (/^\s*(?:crores?|cr\b|lakhs?|lacs?|mn\b|million|billion|bn\b|k\b|\/-?\s*(?:ctc|lpa))/i.test(after)) continue;
+    const window = text.slice(Math.max(0, m.index - 60), m.index + m[0].length + 60);
+    if (NON_PAYMENT_AMOUNT.test(window)) continue;
+    if (AMOUNT_LABEL_NEAR.test(window)) return value;
+  }
+  return undefined;
+}
+
 function headerPresent(headers: GmailHeader[] | undefined, name: string): boolean {
   return Boolean(getHeader(headers ?? [], name));
 }
@@ -962,6 +979,8 @@ export function parseGeneralGmailMessage(
   if ((evidenceType === "cancellation_notice" || evidenceType === "service_event") && !matchedService) {
     const fromSender = personSender ? undefined : merchantFromSender(sender);
     if (!fromSender || isBulk) return null;
+    // A named sender alone is not enough: the text must be about a subscription, plan or mandate.
+    if (!/\b(subscription|membership|auto-?renew\w*|your plan|mandate|billing|trial)\b/i.test(`${subject}\n${clean}`)) return null;
   }
   // Payment-like evidence must read like a transaction, not a newsletter or campus mail.
   if (
@@ -974,8 +993,8 @@ export function parseGeneralGmailMessage(
 
   // Find Amount (explicit INR), tied to payment words and not a stipend/prize/market figure.
   let amountRupees: number | undefined;
-  if (AMOUNT_LABEL_NEAR.test(clean) && !(NON_PAYMENT_AMOUNT.test(subject) && !matchedService)) {
-    amountRupees = findInrAmount(clean);
+  if (!(NON_PAYMENT_AMOUNT.test(subject) && !matchedService)) {
+    amountRupees = findPaymentAmount(clean);
   }
   if (
     !amountRupees &&
