@@ -16,7 +16,8 @@ export async function middleware(request: NextRequest) {
   const isApiRequest = request.nextUrl.pathname.startsWith("/api/");
   const isLegalPage =
     PUBLIC_LEGAL_PATHS.includes(request.nextUrl.pathname) ||
-    request.nextUrl.pathname === "/api/billing/webhook"; // signed provider callback, verified in the route
+    request.nextUrl.pathname === "/api/billing/webhook" || // signed provider callback, verified in the route
+    request.nextUrl.pathname === "/api/billing/cleanup"; // Vercel cron, requires the CRON_SECRET bearer in the route
 
   if (
     !supabaseUrl ||
