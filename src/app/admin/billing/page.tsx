@@ -28,8 +28,7 @@ async function resolvePayment(formData: FormData) {
   const detail = await fetchDodoPayment(paymentId, getDodoEnv());
   if (!detail || reconcileProblem(row as UnmatchedRow, detail)) return;
   if (!(await sessionConfirmedAtDodo(row.checkout_session_id as string, paymentId, getDodoEnv()))) return;
-  const { data: profile } = await admin.from("profiles").select("id").eq("id", row.claimed_user_id).maybeSingle();
-  if (!profile) return;
+  // The payments.user_id foreign key rejects a user that does not exist.
   const { data: existing } = await admin.from("payments").select("provider_payment_id").eq("provider_payment_id", paymentId).maybeSingle();
   if (!existing) {
     const paidAt = typeof detail.created_at === "string" && !Number.isNaN(Date.parse(detail.created_at)) ? detail.created_at : new Date().toISOString();
