@@ -20,7 +20,13 @@ export async function POST() {
       getDodoEnv()
     );
     // Remember the session we created so a payment can only be credited to the user it was made for.
-    const { error } = await createSupabaseAdminClient()
+    const admin = createSupabaseAdminClient();
+    // Retention: a session only matters until its payment webhook arrives. Drop anything older than 7 days.
+    await admin
+      .from("checkout_sessions")
+      .delete()
+      .lt("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+    const { error } = await admin
       .from("checkout_sessions")
       .insert({ session_id: sessionId, user_id: data.user.id, mode: getDodoMode() });
     if (error) return NextResponse.json({ error: "Checkout is unavailable." }, { status: 503 });
