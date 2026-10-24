@@ -45,3 +45,19 @@ export async function fetchDodoPayment(
   if (!res.ok) return null;
   return (await res.json()) as DodoPaymentDetail;
 }
+
+/** The checkout session must exist in our own Dodo account (only our server creates them) and point at this payment. */
+export async function sessionConfirmedAtDodo(
+  sessionId: string,
+  paymentId: string,
+  env: { apiKey?: string; baseUrl: string },
+  fetchImpl: typeof fetch = fetch
+): Promise<boolean> {
+  if (!env.apiKey) return false;
+  const res = await fetchImpl(`${env.baseUrl}/checkouts/${encodeURIComponent(sessionId)}`, {
+    headers: { Authorization: `Bearer ${env.apiKey}` },
+  });
+  if (!res.ok) return false;
+  const body = (await res.json()) as { id?: unknown; payment_id?: unknown };
+  return body.id === sessionId && body.payment_id === paymentId;
+}
