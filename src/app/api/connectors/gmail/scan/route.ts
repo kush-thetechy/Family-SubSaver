@@ -21,6 +21,7 @@ import {
 } from "@/lib/connectors/gmail-policy";
 import { GmailHistoryRange, GmailScanCoverage, Subscription } from "@/types";
 import { computeImportKey } from "@/lib/connectors/import-key";
+import { handleBatchedScan } from "@/lib/connectors/batched-scan-handler";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -28,6 +29,9 @@ interface ScanRequestBody {
   mode?: "live" | "sandbox";
   historyRange?: string;
   existingSubscriptions?: Subscription[];
+  batch?: boolean;
+  cursor?: unknown;
+  resume?: boolean;
 }
 
 interface GmailScanQuota {
@@ -377,6 +381,18 @@ async function handlePost(request: Request) {
     );
     clearSessionCookie(response);
     return response;
+  }
+
+  if (body.batch === true) {
+    return handleBatchedScan({
+      supabase,
+      userId,
+      session,
+      accessToken,
+      historyRange,
+      cursor: body.cursor,
+      resume: body.resume === true,
+    });
   }
 
   // Execute live multi-lane search

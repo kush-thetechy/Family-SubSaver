@@ -12,6 +12,7 @@ import {
   getGmailHistoryWindow,
   normalizeGmailHistoryRange,
   searchGmailMultiLane,
+  setGmailRetryDelaysForTests,
 } from "../connectors/gmail-service";
 import { DiscoveryEvidence, Subscription } from "@/types";
 
@@ -528,6 +529,7 @@ You will receive a pre-debit notification at least 24 hours prior to every sched
 });
 
 describe("Gmail scan limits and failures", () => {
+  setGmailRetryDelaysForTests([0, 0, 0]);
   it("caps fetched messages and reports when a scan may be incomplete", async () => {
     const listRequests: string[] = [];
     const fetchedMessages: string[] = [];
@@ -588,7 +590,8 @@ describe("Gmail scan limits and failures", () => {
       expect(result.coverage.laneCoverage.every(
         (lane) => lane.status === "failed" && lane.errorStatus === 503
       )).toBe(true);
-      expect(fetchMock).toHaveBeenCalledTimes(5);
+      // each lane: 1 attempt + 3 backoff retries on 503
+      expect(fetchMock).toHaveBeenCalledTimes(20);
     } finally {
       vi.unstubAllGlobals();
     }

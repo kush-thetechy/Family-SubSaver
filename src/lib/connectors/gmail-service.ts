@@ -1437,7 +1437,7 @@ function hasAnyKeyword(text: string, keywords: string[]): boolean {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
-function hasSubscriptionEmailKeywords(message: GmailMessage): boolean {
+export function hasSubscriptionEmailKeywords(message: GmailMessage): boolean {
   const headers = message.payload?.headers ?? [];
   const searchableText = cleanHtmlText(
     [
@@ -1478,11 +1478,40 @@ function hasSubscriptionEmailKeywords(message: GmailMessage): boolean {
   return hasBillingSignal && hasSubscriptionSignal;
 }
 
+let RETRY_DELAYS_MS = [400, 1200, 3000];
+/** Test hook: shorten or disable retry waits. */
+export function setGmailRetryDelaysForTests(delays: number[]): void {
+  RETRY_DELAYS_MS = delays;
+}
+
+function isRetryableGmailStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 export async function fetchGmailJson<T>(url: string, accessToken: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
-  });
+  let response!: Response;
+  for (let attempt = 0; ; attempt += 1) {
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    let retryable = !response.ok && isRetryableGmailStatus(response.status);
+    if (!response.ok && response.status === 403) {
+      // Gmail reports per-user rate limits as 403 rateLimitExceeded; auth denials stay fatal.
+      try {
+        const text = await response.clone().text();
+        retryable = /rateLimitExceeded|userRateLimitExceeded/i.test(text);
+      } catch {
+        retryable = false;
+      }
+    }
+    if (!retryable || attempt >= RETRY_DELAYS_MS.length) break;
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const delay = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, 5000)
+      : RETRY_DELAYS_MS[attempt];
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
 
   if (!response.ok) {
     throw new GmailApiError(
@@ -1532,24 +1561,16 @@ export async function fetchGmailJson<T>(url: string, accessToken: string): Promi
  * Searches bounded, independent discovery lanes, records pagination coverage,
  * and parses matched message content in memory.
  */
-export async function searchGmailMultiLane(
-  accessToken: string,
-  options: ScanOptions = {}
-): Promise<{
-  candidates: ConsolidatedSubscriptionCandidate[];
-  totalMessagesScanned: number;
-  lanesScanned: string[];
-  warnings: string[];
-  coverage: GmailScanCoverage;
-  fatalErrorStatus?: number;
-}> {
-  const historyRange = normalizeGmailHistoryRange(options.historyRange);
-  const historyWindow = getGmailHistoryWindow(historyRange);
-  const cutoffTime = historyWindow.start.getTime();
-  const dateFilter =
-    historyRange === "13m"
-      ? `after:${historyWindow.start.toISOString().slice(0, 10).replace(/-/g, "/")} -in:spam -in:trash `
-      : `newer_than:${historyRange === "30d" ? 30 : 45}d -in:spam -in:trash `;
+export interface GmailLane { key: string; name: string; query: string }
+
+export function buildGmailDateFilter(historyRange: GmailHistoryRange): string {
+  const w = getGmailHistoryWindow(historyRange);
+  return historyRange === "13m"
+    ? `after:${w.start.toISOString().slice(0, 10).replace(/-/g, "/")} -in:spam -in:trash `
+    : `newer_than:${historyRange === "30d" ? 30 : 45}d -in:spam -in:trash `;
+}
+
+export function buildGmailLanes(dateFilter: string): GmailLane[] {
   const billingTerms = gmailAnyOf(BILLING_KEYWORDS);
   const recurringTerms = gmailAnyOf(SUBSCRIPTION_EVENT_KEYWORDS);
   const knownProviderTerms = gmailAnyOf(KNOWN_PROVIDER_SEARCH_TERMS);
@@ -1585,6 +1606,28 @@ export async function searchGmailMultiLane(
       query: `${dateFilter}${mandateTerms}`,
     },
   ];
+  return lanes;
+}
+
+export async function searchGmailMultiLane(
+  accessToken: string,
+  options: ScanOptions = {}
+): Promise<{
+  candidates: ConsolidatedSubscriptionCandidate[];
+  totalMessagesScanned: number;
+  lanesScanned: string[];
+  warnings: string[];
+  coverage: GmailScanCoverage;
+  fatalErrorStatus?: number;
+}> {
+  const historyRange = normalizeGmailHistoryRange(options.historyRange);
+  const historyWindow = getGmailHistoryWindow(historyRange);
+  const cutoffTime = historyWindow.start.getTime();
+  const dateFilter =
+    historyRange === "13m"
+      ? `after:${historyWindow.start.toISOString().slice(0, 10).replace(/-/g, "/")} -in:spam -in:trash `
+      : `newer_than:${historyRange === "30d" ? 30 : 45}d -in:spam -in:trash `;
+  const lanes = buildGmailLanes(dateFilter);
 
   const uniqueMessageIds = new Set<string>();
   const warnings: string[] = [];
