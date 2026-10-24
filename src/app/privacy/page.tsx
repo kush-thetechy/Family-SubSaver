@@ -18,7 +18,7 @@ export default function Page() {
           <h2 className="font-semibold">Gmail, only if you connect it</h2>
           <ul className="list-disc pl-5">
             <li>Read-only access. Scans run only when you click. No background scanning. Attachments are not read.</li>
-            <li>The app searches your mailbox for subscription receipts, renewals and payment mandate messages, reads matched messages during that request, extracts service, amount, cycle and dates, and shows candidates. Raw message content is not stored. Nothing is saved until you confirm it.</li>
+            <li>The app searches your mailbox for subscription receipts, renewals and payment mandate messages, reads matched messages during that request, extracts service, amount, cycle and dates, and shows candidates. Raw message content is not stored. No subscription is added to your list until you confirm it. The only things stored from a scan are your consent record and coverage counts (how many messages were searched and read).</li>
             <li>The access token lives in a short-lived, encrypted, HttpOnly browser cookie, not in our database.</li>
             <li>You can withdraw consent, disconnect, delete records that came from Gmail, or delete your account in Settings.</li>
             <li>Gmail data is not sold, not used for advertising, and not used to train AI models.</li>
