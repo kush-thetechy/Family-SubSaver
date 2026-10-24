@@ -24,7 +24,9 @@ export async function GET(request: Request) {
   const loginUrl = new URL("/login", requestUrl.origin);
   loginUrl.searchParams.set(
     "error",
-    "Your email confirmation link could not be verified. Please try signing in again."
+    "This link could not be verified. It may have expired, been used already, or been opened in a different browser than the one that requested it. Sign in, or request a new link with Forgot password (open it in the same browser)."
   );
-  return NextResponse.redirect(loginUrl);
+  const failed = NextResponse.redirect(loginUrl);
+  failed.cookies.set("fss_pw_reset", "", { maxAge: 0, path: "/" });
+  return failed;
 }
