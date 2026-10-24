@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { computeEntitlement, getBillingConfig, type Milestone } from "../billing";
 
 const m = (first_at: string, seen = 3): Milestone => ({ kind: "gmail_scan_viewed", first_at, live_subscriptions_seen: seen });
-const on = { enabled: true, trialDays: 30, amountPaise: 3000 };
+const on = { enabled: true, trialDays: 30, amountPaise: 6000 };
 
 describe("billing scaffold", () => {
   it("is disabled by default and never asks for a fee", () => {
@@ -13,12 +13,12 @@ describe("billing scaffold", () => {
     expect(computeEntitlement([], null, on).state).toBe("not_started");
     expect(computeEntitlement([m("2026-10-01T00:00:00Z", 0)], null, on).state).toBe("not_started");
   });
-  it("runs a trial from the first qualifying use, then the fee is Rs 30", () => {
+  it("runs a trial from the first qualifying use, then the fee is Rs 60", () => {
     const first = m("2026-10-01T00:00:00Z");
     const mid = computeEntitlement([first], null, on, new Date("2026-10-20T00:00:00Z"));
     expect(mid).toMatchObject({ state: "trial", daysLeft: 11 });
     const after = computeEntitlement([first], null, on, new Date("2026-11-01T00:00:00Z"));
-    expect(after).toMatchObject({ state: "fee_due", amountPaise: 3000 });
+    expect(after).toMatchObject({ state: "fee_due", amountPaise: 6000 });
   });
   it("uses the earliest milestone and respects paid", () => {
     const list = [m("2026-10-10T00:00:00Z"), m("2026-10-01T00:00:00Z")];

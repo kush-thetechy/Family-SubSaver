@@ -9,7 +9,7 @@
  *
  * Nothing here charges anyone, contacts a payment provider or blocks any feature.
  */
-export const FEE_AMOUNT_PAISE = 3000; // Rs 30
+export const FEE_AMOUNT_PAISE = 6000; // Rs 60 (owner approved 2026-10-24 for Dodo; Rs 30 is below Dodo minimum)
 
 export interface BillingConfig {
   enabled: boolean;

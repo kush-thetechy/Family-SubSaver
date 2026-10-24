@@ -19,7 +19,7 @@ export function getLegalConfig(env: Record<string, string | undefined> = process
     operator,
     contact,
     refundDays: Number.isFinite(days) && days >= 0 && env.NEXT_PUBLIC_REFUND_WINDOW_DAYS ? Math.floor(days) : null,
-    priceRupees: 30,
+    priceRupees: 60,
     billingLive: env.NEXT_PUBLIC_BILLING_ENABLED === "true",
   };
 }
