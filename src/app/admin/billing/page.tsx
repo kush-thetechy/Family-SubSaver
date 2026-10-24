@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getDodoEnv, getDodoMode } from "@/lib/dodo";
-import { fetchDodoPayment, isBillingAdmin, reconcileProblem, type UnmatchedRow } from "@/lib/reconcile";
+import { fetchDodoPayment, isBillingAdmin, reconcileProblem, sessionConfirmedAtDodo, type UnmatchedRow } from "@/lib/reconcile";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -27,6 +27,7 @@ async function resolvePayment(formData: FormData) {
   if (!row || row.mode !== getDodoMode()) return; // only this environment's rows
   const detail = await fetchDodoPayment(paymentId, getDodoEnv());
   if (!detail || reconcileProblem(row as UnmatchedRow, detail)) return;
+  if (!(await sessionConfirmedAtDodo(row.checkout_session_id as string, paymentId, getDodoEnv()))) return;
   const { data: profile } = await admin.from("profiles").select("id").eq("id", row.claimed_user_id).maybeSingle();
   if (!profile) return;
   const { data: existing } = await admin.from("payments").select("provider_payment_id").eq("provider_payment_id", paymentId).maybeSingle();
@@ -65,8 +66,8 @@ export default async function AdminBillingPage() {
         <form key={r.provider_payment_id} action={resolvePayment} style={{ borderTop: "1px solid #ccc", padding: "12px 0" }}>
           <input type="hidden" name="payment_id" value={r.provider_payment_id} />
           <div>{r.provider_payment_id} ({r.mode}, {r.reason})</div>
-          <div>User {r.claimed_user_id}, session {r.checkout_session_id}, {r.amount_minor} {r.currency}, {new Date(r.created_at).toLocaleString("en-IN")}</div>
-          <button type="submit" disabled={r.mode !== getDodoMode()}>Verify with Dodo and credit</button>
+          <div>User {r.claimed_user_id}, session {r.checkout_session_id}, {r.amount_minor} {r.currency}, {new Date(r.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</div>
+          <button type="submit" style={{ marginTop: 8, padding: "6px 12px", border: "1px solid #4f46e5", borderRadius: 6, background: "#4f46e5", color: "#fff" }} disabled={r.mode !== getDodoMode()}>Verify with Dodo and credit</button>
         </form>
       ))}
     </main>

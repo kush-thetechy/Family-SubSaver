@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useApp } from "@/context/AppContext";
@@ -21,6 +21,7 @@ export function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
   const [signOutError, setSignOutError] = useState("");
+  const [reviewCount, setReviewCount] = useState(0);
   const {
     currentProfile,
     authUser,
@@ -33,6 +34,18 @@ export function Navigation() {
     summary,
     signOut,
   } = useApp();
+
+  // Owner-only: the endpoint answers 404 to everyone else, so nothing shows for other users.
+  useEffect(() => {
+    if (!authUser) {
+      setReviewCount(0);
+      return;
+    }
+    fetch("/api/billing/admin-status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setReviewCount(d && typeof d.pending === "number" ? d.pending : 0))
+      .catch(() => setReviewCount(0));
+  }, [authUser]);
 
   const navLinks = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -156,6 +169,14 @@ export function Navigation() {
               </div>
             ) : authUser ? (
               <>
+                {reviewCount > 0 ? (
+                  <Link
+                    href="/admin/billing"
+                    className="rounded-lg bg-amber-100 px-2.5 py-1.5 text-xs font-semibold text-amber-900"
+                  >
+                    {reviewCount} payment{reviewCount === 1 ? "" : "s"} to review
+                  </Link>
+                ) : null}
                 <span
                   data-clarity-mask="true"
                   className="hidden sm:block max-w-40 truncate text-xs text-slate-500 dark:text-slate-400"
