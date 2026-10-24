@@ -87,3 +87,19 @@ describe("true positives survive the gate (synthetic fixtures)", () => {
     expect(ev?.evidence_type).toBe("mandate_revocation");
   });
 });
+
+describe("amounts and lifecycle wording", () => {
+  it("a case-study figure in crore is not a payment", () => {
+    expect(
+      parseGeneralGmailMessage(
+        msg("Case Lab allocation", "Revenue grew 18% to INR 336.2 crore. Payment of the case fee is not required. Invoice not applicable.", "Case Lab <case.lab@school.example>")
+      )
+    ).toBeNull();
+  });
+  it("a class cancellation is not a subscription cancellation", () => {
+    expect(parseGeneralGmailMessage(msg("Class cancelled", "Tomorrow's session has been cancelled.", "no-reply@school.example"))).toBeNull();
+  });
+  it("a subscription cancellation from a named merchant still counts", () => {
+    expect(parseGeneralGmailMessage(msg("Subscription cancelled", "Your subscription has been cancelled.", "Sample Notes <billing@sample-notes.example>"))?.evidence_type).toBe("cancellation_notice");
+  });
+});
