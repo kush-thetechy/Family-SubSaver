@@ -13,14 +13,19 @@ export const FEE_AMOUNT_PAISE = 6000; // Rs 60 (owner approved 2026-10-24 for Do
 
 export interface BillingConfig {
   enabled: boolean;
+  /** Soft trial gate. OFF unless NEXT_PUBLIC_FEE_GATE_ENABLED=true AND billing is enabled.
+   *  Owner has NOT chosen the after-trial behavior yet; this only prepares it. */
+  feeGateEnabled: boolean;
   trialDays: number;
   amountPaise: number;
 }
 
 export function getBillingConfig(env: Record<string, string | undefined> = process.env): BillingConfig {
   const days = Number(env.NEXT_PUBLIC_BILLING_TRIAL_DAYS);
+  const enabled = env.NEXT_PUBLIC_BILLING_ENABLED === "true";
   return {
-    enabled: env.NEXT_PUBLIC_BILLING_ENABLED === "true",
+    enabled,
+    feeGateEnabled: enabled && env.NEXT_PUBLIC_FEE_GATE_ENABLED === "true",
     trialDays: Number.isFinite(days) && days > 0 ? Math.floor(days) : 30,
     amountPaise: FEE_AMOUNT_PAISE,
   };
@@ -67,4 +72,17 @@ export interface PaymentProvider {
   readonly name: string;
   createOrder(input: { userId: string; amountPaise: number; currency: "INR" }): Promise<{ checkoutUrl: string; orderId: string }>;
   verifyWebhook(rawBody: string, signature: string): Promise<{ orderId: string; paid: boolean } | null>;
+}
+
+/** Shown when the soft gate blocks a NEW scan/import. Existing data, export and deletion stay available. */
+export const FEE_GATE_MESSAGE =
+  "Your free period has ended. Pay the one-time Rs 60 fee to run new scans or imports. Your existing data stays available, and you can still export or delete it.";
+
+/**
+ * Soft gate predicate: blocks only NEW capture (Gmail scans, OCR imports) once the free
+ * period has ended unpaid. Never blocks viewing, exporting or deleting existing data, and
+ * never blocks anything while the gate flag is off.
+ */
+export function isNewCaptureBlocked(ent: EntitlementState, config: BillingConfig): boolean {
+  return config.feeGateEnabled && ent.state === "fee_due";
 }

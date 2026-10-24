@@ -21,6 +21,7 @@ import {
 } from "@/lib/connectors/gmail-policy";
 import { GmailHistoryRange, GmailScanCoverage, Subscription } from "@/types";
 import { computeImportKey } from "@/lib/connectors/import-key";
+import { assessFeeGate } from "@/lib/fee-gate";
 import { handleBatchedScan } from "@/lib/connectors/batched-scan-handler";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -367,6 +368,14 @@ async function handlePost(request: Request) {
     return NextResponse.json(
       { success: false, error: "Gmail consent could not be verified." },
       { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  const feeGate = await assessFeeGate(userId);
+  if (feeGate.blocked) {
+    return NextResponse.json(
+      { success: false, error: feeGate.message, code: "fee_due" },
+      { status: 402, headers: { "Cache-Control": "no-store" } }
     );
   }
 
