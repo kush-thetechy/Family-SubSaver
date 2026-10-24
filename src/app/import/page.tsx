@@ -2216,8 +2216,8 @@ function ImportContent() {
 
       {/* Connect Gmail & Consent Modal */}
       {isGmailModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl relative space-y-5">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain p-3 sm:items-center sm:p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150">
+          <div role="dialog" aria-modal="true" aria-label="Connect Gmail" className="my-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-lg space-y-5 overflow-y-auto overscroll-contain rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl relative dark:border-slate-800 dark:bg-slate-900 sm:max-h-[calc(100dvh-2rem)] sm:p-7">
             <button
               onClick={() => setIsGmailModalOpen(false)}
               className="absolute right-4 top-4 p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
