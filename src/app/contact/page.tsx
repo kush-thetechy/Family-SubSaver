@@ -4,7 +4,7 @@ export const metadata = { title: "Contact - Family SubSaver" };
 export default function Page() {
   return (
     <LegalPage title="Contact">
-      {(c) => <p>Write to {c.contact} for support, privacy requests, deletion or payment questions. Operator: {c.operator}.</p>}
+      {(c) => <p>Write to {c.contact} for support, privacy requests, deletion or payment questions.</p>}
     </LegalPage>
   );
 }
