@@ -201,7 +201,7 @@ export default function SettingsPage() {
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {isDemoMode
                 ? "Demo changes persist only in this browser. Configure Supabase to enable sign-in and private cloud storage."
-                : "Your subscription records are stored in your Supabase household and protected by database Row Level Security. Family sharing is not enabled yet."}
+                : "Your subscription records are stored in your Supabase household and protected by database Row Level Security. Family sharing is optional and starts only when someone accepts your invitation on the Household page."}
             </p>
           </div>
 
