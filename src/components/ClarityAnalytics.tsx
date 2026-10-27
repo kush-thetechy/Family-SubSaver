@@ -1,10 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 
 const CONSENT_KEY = "fss_clarity_consent_v1";
 const CONSENT_EVENT = "fss-clarity-consent-change";
 const CLARITY_ID = "z4ao34d8al";
+
+// Clarity runs only on public pages. Signed-in app routes can show Gmail-derived data,
+// so they are never recorded, even if analytics was allowed on a public page.
+const PUBLIC_PATHS = ["/", "/pricing", "/privacy", "/terms", "/login"];
+
+function isPublicRoute() {
+  return PUBLIC_PATHS.includes(window.location.pathname.replace(/\/+$/, "") || "/");
+}
 
 declare global {
   interface Window {
@@ -13,6 +22,7 @@ declare global {
 }
 
 function loadClarity() {
+  if (!isPublicRoute()) return;
   const clarity =
     window.clarity ||
     Object.assign(
@@ -36,6 +46,7 @@ function loadClarity() {
 }
 
 export function ClarityAnalytics() {
+  const pathname = usePathname();
   const [consent, setConsent] = useState<"accepted" | "rejected" | null>(null);
 
   useEffect(() => {
@@ -59,6 +70,10 @@ export function ClarityAnalytics() {
     window.addEventListener(CONSENT_EVENT, handleConsentChange);
     return () => window.removeEventListener(CONSENT_EVENT, handleConsentChange);
   }, []);
+
+  useEffect(() => {
+    if (!isPublicRoute()) window.clarity?.("stop");
+  }, [pathname]);
 
   const chooseConsent = (accepted: boolean) => {
     window.dispatchEvent(
