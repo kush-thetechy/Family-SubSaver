@@ -503,7 +503,9 @@ function SubscriptionsContent() {
       {filteredSubscriptions.length === 0 && (
         <div className="text-center py-12 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8">
           <p className="text-slate-500 dark:text-slate-400 text-sm">
-            No subscriptions matched your search or filter.
+            {subscriptions.length === 0
+              ? "No subscriptions yet. Use Add Subscription to record your first one."
+              : "No subscriptions matched your search or filter."}
           </p>
         </div>
       )}
