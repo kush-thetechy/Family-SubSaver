@@ -6,37 +6,17 @@ export const INDIAN_SUBSCRIPTION_CATALOG: CatalogService[] = [
     name: "Spotify",
     category: "music",
     icon: "music",
-    official_website: "https://www.spotify.com/in-en/premium/",
+    official_website: "https://www.spotify.com/in-en/family/",
     terms_url: "https://www.spotify.com/in-en/legal/premium-family-terms/",
-    verified_on: "2026-01-15",
+    verified_on: "2026-10-27",
     plans: [
-      {
-        name: "Mini (1 Day)",
-        billing_cycle: "prepaid",
-        amount_paise: 700,
-        user_limit: 1,
-        notes: "Mobile only, 1 day validity",
-      },
-      {
-        name: "Individual",
-        billing_cycle: "monthly",
-        amount_paise: 11900,
-        user_limit: 1,
-        notes: "1 account, ad-free music",
-      },
-      {
-        name: "Duo",
-        billing_cycle: "monthly",
-        amount_paise: 14900,
-        user_limit: 2,
-        notes: "2 accounts for couples under one roof",
-      },
       {
         name: "Family",
         billing_cycle: "monthly",
         amount_paise: 17900,
         user_limit: 6,
-        notes: "Up to 6 accounts. Family members must reside at the same address.",
+        verified: true,
+        notes: "Up to 6 accounts. Family members must live at the same address. Price read from spotify.com/in-en/family on 27 Oct 2026.",
       },
     ],
     sharing_policy_notes:
@@ -49,7 +29,7 @@ export const INDIAN_SUBSCRIPTION_CATALOG: CatalogService[] = [
     icon: "video",
     official_website: "https://www.youtube.com/premium",
     terms_url: "https://support.google.com/youtube/answer/7507349",
-    verified_on: "2026-01-15",
+    verified_on: "2026-01-15 (not rechecked)",
     plans: [
       {
         name: "Individual",
@@ -76,7 +56,7 @@ export const INDIAN_SUBSCRIPTION_CATALOG: CatalogService[] = [
     icon: "tv",
     official_website: "https://help.netflix.com/en/node/24926",
     terms_url: "https://help.netflix.com/en/node/123277",
-    verified_on: "2026-01-15",
+    verified_on: "2026-01-15 (not rechecked)",
     plans: [
       {
         name: "Mobile",
@@ -117,7 +97,7 @@ export const INDIAN_SUBSCRIPTION_CATALOG: CatalogService[] = [
     icon: "film",
     official_website: "https://www.hotstar.com/in/subscribe/get-started",
     terms_url: "https://www.hotstar.com/in/terms-of-use",
-    verified_on: "2026-01-15",
+    verified_on: "2026-01-15 (not rechecked)",
     plans: [
       {
         name: "Super (Annual)",
@@ -144,7 +124,7 @@ export const INDIAN_SUBSCRIPTION_CATALOG: CatalogService[] = [
     icon: "cloud",
     official_website: "https://one.google.com/about/plans",
     terms_url: "https://support.google.com/googleone/answer/9004014",
-    verified_on: "2026-01-15",
+    verified_on: "2026-01-15 (not rechecked)",
     plans: [
       {
         name: "Basic 100GB (Annual)",
@@ -178,7 +158,7 @@ export const INDIAN_SUBSCRIPTION_CATALOG: CatalogService[] = [
     icon: "bot",
     official_website: "https://openai.com/chatgpt/pricing/",
     terms_url: "https://openai.com/policies/terms-of-use/",
-    verified_on: "2026-01-15",
+    verified_on: "2026-01-15 (not rechecked)",
     plans: [
       {
         name: "Plus (Monthly)",

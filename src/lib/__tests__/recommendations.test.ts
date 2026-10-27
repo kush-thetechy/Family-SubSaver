@@ -44,8 +44,8 @@ describe("Savings Recommendations & Conservative Checks", () => {
     expect(spotifyRec).toBeDefined();
     // State must be potential_saving because family residency verification is required
     expect(spotifyRec?.state).toBe("potential_saving");
-    // For 2 users, Spotify Duo is ₹149/mo (14900 paise). Current spend = ₹238 (23800 paise). Saving = ₹89 (8900 paise)
-    expect(spotifyRec?.potential_monthly_savings_paise).toBe(8900);
+    // Only the provider-verified Family plan (Rs179, up to 6) is used. Spend Rs238, saving Rs59.
+    expect(spotifyRec?.potential_monthly_savings_paise).toBe(5900);
     expect(spotifyRec?.assumptions).toContain(
       "All members must meet the provider's residency policy (residing at the same physical household)."
     );
@@ -150,5 +150,18 @@ describe("plan capacity", () => {
     const rec = recs.find((r) => r.state === "potential_saving");
     expect(rec?.title).toContain("Family");
     expect(rec?.potential_monthly_savings_paise).toBe(35700 - 17900);
+  });
+});
+
+describe("unverified prices", () => {
+  it("never claims savings from a catalog plan that was not verified", () => {
+    const mk = (id: string) => ({
+      id, household_id: "h", service_name: "YouTube Premium", plan_name: "Individual", category: "music",
+      billing_cycle: "monthly", amount_paise: 29900, validity_days: null, payer_id: "u1",
+      user_ids: ["u1"], billing_channel: "UPI AutoPay", renewal_date: null, is_active: true,
+      visibility: "full_details", source: "manual", notes: null, created_at: "", updated_at: "",
+    }) as never;
+    const recs = generateSavingsRecommendations([mk("1"), mk("2")]);
+    expect(recs.some((r) => r.state === "potential_saving")).toBe(false);
   });
 });

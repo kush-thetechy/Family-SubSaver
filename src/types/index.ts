@@ -123,6 +123,8 @@ export interface CatalogService {
     billing_cycle: BillingCycle;
     amount_paise: number;
     user_limit: number;
+    /** True only when this exact price was read from the provider's own page on verified_on. */
+    verified?: boolean;
     notes?: string;
   }[];
   sharing_policy_notes: string;
