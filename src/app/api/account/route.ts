@@ -8,6 +8,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 interface TokenClaims {
   auth_time?: number;
+  amr?: Array<{ method?: string; timestamp?: number }>;
 }
 
 function hasTrustedOrigin(request: Request): boolean {
@@ -28,11 +29,15 @@ function hasRecentAuthentication(accessToken: string): boolean {
     const claims = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")
     ) as TokenClaims;
-    return Boolean(
-      claims.auth_time &&
-        claims.auth_time <= Math.floor(Date.now() / 1000) &&
-        Math.floor(Date.now() / 1000) - claims.auth_time <= 10 * 60
-    );
+    const now = Math.floor(Date.now() / 1000);
+    // Supabase access tokens carry no auth_time claim. The password sign-in
+    // time is in amr, and a fresh signInWithPassword starts a new session.
+    const passwordTimes = (claims.amr ?? [])
+      .filter((entry) => entry.method === "password" && typeof entry.timestamp === "number")
+      .map((entry) => entry.timestamp as number);
+    const authTime =
+      claims.auth_time ?? (passwordTimes.length ? Math.max(...passwordTimes) : 0);
+    return Boolean(authTime && authTime <= now && now - authTime <= 10 * 60);
   } catch {
     return false;
   }
