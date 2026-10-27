@@ -137,3 +137,18 @@ describe("Savings Recommendations & Conservative Checks", () => {
     );
   });
 });
+
+describe("plan capacity", () => {
+  it("does not propose a 2-seat Duo plan for 3 Spotify accounts", () => {
+    const mk = (id: string) => ({
+      id, household_id: "h", service_name: "Spotify", plan_name: "Individual", category: "music",
+      billing_cycle: "monthly", amount_paise: 11900, validity_days: null, payer_id: "u1",
+      user_ids: ["u1"], billing_channel: "UPI AutoPay", renewal_date: null, is_active: true,
+      visibility: "full_details", source: "manual", notes: null, created_at: "", updated_at: "",
+    }) as never;
+    const recs = generateSavingsRecommendations([mk("1"), mk("2"), mk("3")]);
+    const rec = recs.find((r) => r.state === "potential_saving");
+    expect(rec?.title).toContain("Family");
+    expect(rec?.potential_monthly_savings_paise).toBe(35700 - 17900);
+  });
+});

@@ -68,12 +68,19 @@ export function generateSavingsRecommendations(
           c.id.includes(serviceName)
       );
 
-      const familyPlan = catalogEntry?.plans.find(
-        (p) =>
-          p.name.toLowerCase().includes("family") ||
-          p.name.toLowerCase().includes("duo") ||
-          (p.user_limit && p.user_limit >= subs.length)
-      );
+      // A shared plan only counts if it covers every duplicate account.
+      // Pick the cheapest such plan, never a plan with a lower seat limit.
+      const familyPlan = catalogEntry?.plans
+        .filter(
+          (p) =>
+            (p.user_limit ?? 0) >= subs.length &&
+            (p.user_limit ?? 0) > 1
+        )
+        .sort(
+          (x, y) =>
+            calculateMonthlyPaise(x.amount_paise, x.billing_cycle) -
+            calculateMonthlyPaise(y.amount_paise, y.billing_cycle)
+        )[0];
 
       if (familyPlan && catalogEntry) {
         const familyMonthlyPaise = calculateMonthlyPaise(
