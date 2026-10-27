@@ -775,7 +775,7 @@ function SubscriptionsContent() {
                         Full Details (Shared)
                       </span>
                       <p className="text-[11px] text-slate-500">
-                        If you joined someone's household, its owner can see the service name, plan, price, cycle, renewal date and payer. Notes and billing channel stay private.
+                        If you joined someone&apos;s household, its owner can see the service name, plan, price, cycle, renewal date and payer. Notes and billing channel stay private.
                       </p>
                     </div>
                   </label>
@@ -793,7 +793,7 @@ function SubscriptionsContent() {
                         Totals Only (Redacted)
                       </span>
                       <p className="text-[11px] text-slate-500">
-                        Amount counts toward the household owner's totals, but service name and notes are redacted.
+                        Amount counts toward the household owner&apos;s totals, but service name and notes are redacted.
                       </p>
                     </div>
                   </label>
