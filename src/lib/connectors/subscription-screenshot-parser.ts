@@ -113,7 +113,12 @@ function parseAmount(text: string): number | undefined {
   )?.[1];
   if (!paymentText) return undefined;
 
-  const beforeDate = paymentText.split(/\bon\b/i, 1)[0];
+  // Drop dates such as "20 Nov 2026" so the day number is never read as a price.
+  const withoutDates = paymentText.replace(
+    /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?(?:,?\s+\d{4})?/gi,
+    " "
+  );
+  const beforeDate = withoutDates.split(/\bon\b/i, 1)[0];
   const candidates = beforeDate.match(/\b\d[\d,]*(?:\.\d{1,2})?\b/g) ?? [];
   for (const candidate of candidates) {
     const amount = Number(candidate.replace(/,/g, ""));
