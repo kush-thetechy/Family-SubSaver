@@ -284,7 +284,58 @@ export default function SavingsPage() {
           Only prices read from the provider&apos;s own page are shown, with the date. Everything else says to check the provider.
         </p>
 
-        <div className="overflow-x-auto">
+        <div className="md:hidden space-y-3" data-testid="catalog-cards">
+          {INDIAN_SUBSCRIPTION_CATALOG.map((svc) => {
+            const individualPlan = svc.plans.find((p) => p.user_limit === 1 && p.verified);
+            const familyPlan = svc.plans.find((p) => p.user_limit > 1 && p.verified);
+            return (
+              <div key={svc.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 text-xs text-slate-600 dark:text-slate-300">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-sm text-slate-900 dark:text-white">{svc.name}</span>
+                  <a
+                    href={svc.official_website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1 font-medium"
+                  >
+                    Official Site
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+                <dl className="mt-2 grid grid-cols-2 gap-2">
+                  <div>
+                    <dt className="text-[10px] uppercase text-slate-400">Individual</dt>
+                    <dd>
+                      {individualPlan
+                        ? `${formatINR(individualPlan.amount_paise)} / ${individualPlan.billing_cycle}`
+                        : "Check provider"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] uppercase text-slate-400">Family / multi-user</dt>
+                    <dd>
+                      {familyPlan ? (
+                        <span>
+                          <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                            {formatINR(familyPlan.amount_paise)} / {familyPlan.billing_cycle}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            Up to {familyPlan.user_limit} users, checked {svc.verified_on}
+                          </span>
+                        </span>
+                      ) : (
+                        "Check provider"
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+                <p className="mt-2 text-[11px] leading-relaxed">{svc.sharing_policy_notes}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold border-b border-slate-200 dark:border-slate-700">
               <tr>
