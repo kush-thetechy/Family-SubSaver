@@ -24,12 +24,8 @@ export default function Page() {
             <li>You can withdraw consent, disconnect, delete records that came from Gmail, or delete your account in Settings.</li>
             <li>Gmail data is not sold, not used for advertising, and not used to train AI models.</li>
           </ul>
-          <h2 className="font-semibold">Analytics (Microsoft Clarity), only if you allow it</h2>
-          <ul className="list-disc pl-5">
-            <li>Off until you choose. The app asks once, on your first visit. Choosing Allow loads Microsoft Clarity, which records usage and interaction analytics, including session recordings, to help improve the app. Choosing Reject, or closing the prompt, sends nothing.</li>
-            <li>Masking: all on-screen text, including your account email, is masked before anything leaves your browser. Payment checkout happens on Dodo Payments&apos; own page and is not recorded by this app. We do not use analytics to collect passwords, card numbers, UPI PINs or email content.</li>
-            <li>You can turn analytics on or off at any time in Settings. Analytics data is not sold and is not used for advertising.</li>
-          </ul>
+          <h2 className="font-semibold">Usage analytics</h2>
+          <p>Microsoft Clarity session recording and usage analytics are disabled across the app. Previously saved analytics choices do not enable recording.</p>
           <h2 className="font-semibold">Family sharing</h2>
           <p>Another person joins your household only after signing in with their own account and agreeing. Each person connects only their own Gmail. The household owner (the person who sent the invitation) sees service, plan, category, price, cycle, renewal date and payer only for member entries marked Full details. Members do not see the owner&apos;s entries or each other&apos;s. Totals only entries show an amount alone. Hidden entries are never shared. Notes and billing channel are never shared. You can leave at any time.</p>
           <p>Storage: Supabase (database and authentication) and Vercel (hosting).</p>
