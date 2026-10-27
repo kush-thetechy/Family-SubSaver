@@ -48,7 +48,7 @@ export default function SavingsPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <span className="text-xs font-semibold uppercase tracking-wider bg-white/20 px-2.5 py-1 rounded-full text-emerald-50">
-              Verified Household Opportunities
+              Potential Household Savings (estimates)
             </span>
             <div className="mt-3 flex items-baseline gap-2">
               <span className="text-3xl sm:text-4xl font-black tracking-tight">
@@ -281,7 +281,7 @@ export default function SavingsPage() {
           </h2>
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-          Verified pricing and official terms from provider documentation in India.
+          Only prices read from the provider&apos;s own page are shown, with the date. Everything else says to check the provider.
         </p>
 
         <div className="overflow-x-auto">
@@ -297,8 +297,8 @@ export default function SavingsPage() {
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-600 dark:text-slate-300">
               {INDIAN_SUBSCRIPTION_CATALOG.map((svc) => {
-                const individualPlan = svc.plans.find((p) => p.user_limit === 1);
-                const familyPlan = svc.plans.find((p) => p.user_limit > 1);
+                const individualPlan = svc.plans.find((p) => p.user_limit === 1 && p.verified);
+                const familyPlan = svc.plans.find((p) => p.user_limit > 1 && p.verified);
 
                 return (
                   <tr key={svc.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
@@ -308,7 +308,7 @@ export default function SavingsPage() {
                     <td className="p-3 whitespace-nowrap">
                       {individualPlan
                         ? `${formatINR(individualPlan.amount_paise)} / ${individualPlan.billing_cycle}`
-                        : "N/A"}
+                        : "Check provider"}
                     </td>
                     <td className="p-3 whitespace-nowrap">
                       {familyPlan ? (
@@ -317,11 +317,11 @@ export default function SavingsPage() {
                             {formatINR(familyPlan.amount_paise)} / {familyPlan.billing_cycle}
                           </span>
                           <span className="text-[10px] text-slate-400 block">
-                            Up to {familyPlan.user_limit} users
+                            Up to {familyPlan.user_limit} users, checked {svc.verified_on}
                           </span>
                         </div>
                       ) : (
-                        <span className="text-slate-400">Single user only</span>
+                        <span className="text-slate-400">Check provider</span>
                       )}
                     </td>
                     <td className="p-3 max-w-xs text-[11px] leading-relaxed">

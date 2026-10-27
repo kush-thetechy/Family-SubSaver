@@ -73,6 +73,7 @@ export function generateSavingsRecommendations(
       const familyPlan = catalogEntry?.plans
         .filter(
           (p) =>
+            p.verified === true &&
             (p.user_limit ?? 0) >= subs.length &&
             (p.user_limit ?? 0) > 1
         )
