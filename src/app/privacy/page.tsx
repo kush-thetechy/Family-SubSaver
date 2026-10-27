@@ -31,7 +31,7 @@ export default function Page() {
             <li>You can turn analytics on or off at any time in Settings. Analytics data is not sold and is not used for advertising.</li>
           </ul>
           <h2 className="font-semibold">Family sharing</h2>
-          <p>Another person joins your household only after signing in with their own account and agreeing. Each person connects only their own Gmail. Members see service, plan, category, price, cycle, renewal date and payer only for entries marked Full details. Totals only entries show an amount alone. Hidden entries are never shared. Notes and billing channel are never shared. You can leave at any time.</p>
+          <p>Another person joins your household only after signing in with their own account and agreeing. Each person connects only their own Gmail. The household owner (the person who sent the invitation) sees service, plan, category, price, cycle, renewal date and payer only for member entries marked Full details. Members do not see the owner's entries or each other's. Totals only entries show an amount alone. Hidden entries are never shared. Notes and billing channel are never shared. You can leave at any time.</p>
           <p>Storage: Supabase (database and authentication) and Vercel (hosting).</p>
           <p>Account emails (confirmation and password reset) are sent through Resend, which receives your email address and the message content for delivery only.</p>
         </>

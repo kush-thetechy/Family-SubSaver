@@ -71,14 +71,20 @@ export function ClarityAnalytics() {
   return (
     <aside
       aria-label="Analytics privacy choices"
-      className="fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between"
+      className="fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-3xl flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl sm:p-4 sm:gap-3 dark:border-slate-700 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between"
     >
       <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-        Allow Microsoft Clarity to collect usage and interaction analytics to
-        improve the app? Application text and your account email are masked.
-        You can change this choice in Settings.
+        <span className="sm:hidden">
+          Allow Microsoft Clarity usage analytics? Text and your email are
+          masked. Change anytime in Settings.
+        </span>
+        <span className="hidden sm:inline">
+          Allow Microsoft Clarity to collect usage and interaction analytics to
+          improve the app? Application text and your account email are masked.
+          You can change this choice in Settings.
+        </span>
       </p>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2 [&>button]:flex-1 sm:[&>button]:flex-none">
         <button
           type="button"
           onClick={() => chooseConsent(false)}

@@ -97,17 +97,17 @@ export default function HouseholdPage() {
               Household Consent & Privacy Guarantee
             </h2>
             <p>
-              Family membership does NOT automatically expose private subscriptions. Each member retains full autonomy over their records:
+              Sharing goes one way: the person who sent the invitation (the household owner) sees what members choose to share. Members do not see the owner's or each other's subscriptions. Each member keeps full control of their own records:
             </p>
             <ul className="list-disc list-inside space-y-0.5 pt-1 text-slate-700 dark:text-slate-300">
               <li>
-                <strong>Shared (Full Details):</strong> Visible to all household members.
+                <strong>Shared (Full Details):</strong> The household owner sees service, plan, category, price, cycle, renewal date and payer. Notes and billing channel are never shared.
               </li>
               <li>
-                <strong>Totals Only:</strong> Included in aggregated household math, but service title and details are redacted for other members.
+                <strong>Totals Only:</strong> Counted in the owner's household totals as an amount only. Name and details are redacted.
               </li>
               <li>
-                <strong>Hidden:</strong> Never shown to other members and not included in what they see of household totals.
+                <strong>Hidden:</strong> Never shown to the owner and not counted in their totals.
               </li>
             </ul>
           </div>

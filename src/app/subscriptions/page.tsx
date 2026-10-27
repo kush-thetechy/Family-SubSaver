@@ -775,7 +775,7 @@ function SubscriptionsContent() {
                         Full Details (Shared)
                       </span>
                       <p className="text-[11px] text-slate-500">
-                        Household members can see the service name, plan, cost, and usage.
+                        If you joined someone's household, its owner can see the service name, plan, price, cycle, renewal date and payer. Notes and billing channel stay private.
                       </p>
                     </div>
                   </label>
@@ -793,7 +793,7 @@ function SubscriptionsContent() {
                         Totals Only (Redacted)
                       </span>
                       <p className="text-[11px] text-slate-500">
-                        Amount is included in household spend totals, but service name and notes are redacted for other members.
+                        Amount counts toward the household owner's totals, but service name and notes are redacted.
                       </p>
                     </div>
                   </label>
@@ -811,7 +811,7 @@ function SubscriptionsContent() {
                         Hidden (Private to Payer)
                       </span>
                       <p className="text-[11px] text-slate-500">
-                        Completely private. Excluded from group dashboard totals so other members cannot infer its existence.
+                        Completely private. Not shown to the household owner and not counted in their totals.
                       </p>
                     </div>
                   </label>
