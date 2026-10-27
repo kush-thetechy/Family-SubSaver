@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useApp } from "@/context/AppContext";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { AnalyticsSettings } from "@/components/AnalyticsSettings";
 import {
   Download,
   Trash2,
@@ -217,6 +218,10 @@ export default function SettingsPage() {
       </div>
 
       {/* Data Portability & Deletion */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+        <AnalyticsSettings />
+      </div>
+
       <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
         <div className="flex items-center gap-2">
           <Lock className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />

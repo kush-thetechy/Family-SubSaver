@@ -4,6 +4,7 @@ import { PendingJoinRedirect } from "@/components/PendingJoinRedirect";
 import { AppProvider } from "@/context/AppContext";
 import { AuthStatusNotice } from "@/components/AuthStatusNotice";
 import { Navigation } from "@/components/Navigation";
+import { ClarityAnalytics } from "@/components/ClarityAnalytics";
 
 export const metadata: Metadata = {
   title: "Family Subscription Saver | Indian Household Subscription Hub",
@@ -41,6 +42,7 @@ export default function RootLayout({
             <PendingJoinRedirect />
             {children}
           </main>
+          <ClarityAnalytics />
         </AppProvider>
       </body>
     </html>

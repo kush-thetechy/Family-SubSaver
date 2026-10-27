@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 const CONSENT_KEY = "fss_clarity_consent_v1";
 const CONSENT_EVENT = "fss-clarity-consent-change";
-const CLARITY_ID = "z129fpwxcj";
+const CLARITY_ID = "z4ao34d8al";
 
 declare global {
   interface Window {
