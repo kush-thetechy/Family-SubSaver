@@ -23,6 +23,7 @@ export default function Page() {
             <li>The access token lives in a short-lived, encrypted, HttpOnly browser cookie, not in our database.</li>
             <li>You can withdraw consent, disconnect, delete records that came from Gmail, or delete your account in Settings.</li>
             <li>Gmail data is not sold, not used for advertising, and not used to train AI models.</li>
+            <li>Family SubSaver&apos;s use and transfer to any other app of information received from Google APIs will adhere to the <a className="underline" href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer">Google API Services User Data Policy</a>, including the Limited Use requirements. Gmail data is used only to show you subscription suggestions inside the app. No person at Family SubSaver reads your mail, except where you ask for support, where required by law, or for security investigation.</li>
           </ul>
           <h2 className="font-semibold">Analytics (Microsoft Clarity), only if you allow it</h2>
           <ul className="list-disc pl-5">
