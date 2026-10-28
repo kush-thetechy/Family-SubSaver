@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
+import { gmailJson } from "@/lib/connectors/gmail-response";
 import {
   clearSessionCookie,
   getSessionFromRequestCookies,
@@ -79,8 +80,8 @@ async function handleGet() {
         userId
       );
     } catch (error) {
-      console.error("Could not verify Gmail consent status:", error);
-      return NextResponse.json(
+      console.error("Could not verify Gmail consent status:");
+      return gmailJson(
         {
           configured: false,
           connected: false,
@@ -127,7 +128,7 @@ async function handleGet() {
       .limit(1)
       .maybeSingle();
     if (coverageReadError) {
-      console.error("Could not read Gmail scan coverage:", coverageReadError);
+      console.error("Could not read Gmail scan coverage:");
       coverageHistoryAvailable = false;
     } else if (row) {
       latestCoverage = {
@@ -151,7 +152,7 @@ async function handleGet() {
     }
   }
 
-  return NextResponse.json({
+  return gmailJson({
     configured,
     gmailEnabled,
     connected,
@@ -177,7 +178,7 @@ async function handleGet() {
 
 async function handleDelete(request: Request) {
   if (!hasTrustedOrigin(request)) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Untrusted request origin." },
       { status: 403, headers: { "Cache-Control": "no-store" } }
     );
@@ -185,7 +186,7 @@ async function handleDelete(request: Request) {
   const session = getSessionFromRequestCookies();
   const userId = await getSignedInUserId();
   if (!userId) {
-    const response = NextResponse.json(
+    const response = gmailJson(
       { success: false, connected: false, error: "Sign in to disconnect Gmail." },
       { status: 401, headers: { "Cache-Control": "no-store" } }
     );
@@ -214,7 +215,7 @@ async function handleDelete(request: Request) {
     }
   }
 
-  const response = NextResponse.json(
+  const response = gmailJson(
     revokeFailed
       ? {
           success: false,
@@ -239,7 +240,7 @@ async function handleDelete(request: Request) {
 
 async function handlePost(request: Request) {
   if (!hasTrustedOrigin(request)) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Untrusted request origin." },
       { status: 403, headers: { "Cache-Control": "no-store" } }
     );
@@ -248,7 +249,7 @@ async function handlePost(request: Request) {
   try {
     parsedBody = await request.json();
   } catch {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Request body must be valid JSON." },
       { status: 400 }
     );
@@ -258,7 +259,7 @@ async function handlePost(request: Request) {
     typeof parsedBody !== "object" ||
     Array.isArray(parsedBody)
   ) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Request body must be a JSON object." },
       { status: 400 }
     );
@@ -270,7 +271,7 @@ async function handlePost(request: Request) {
     requestMode !== "live" &&
     requestMode !== "sandbox"
   ) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Unsupported Gmail scan mode." },
       { status: 400 }
     );
@@ -279,7 +280,7 @@ async function handlePost(request: Request) {
     body.existingSubscriptions !== undefined &&
     !Array.isArray(body.existingSubscriptions)
   ) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Existing subscriptions must be a list." },
       { status: 400 }
     );
@@ -290,7 +291,7 @@ async function handlePost(request: Request) {
     body.historyRange !== "45d" &&
     body.historyRange !== "13m"
   ) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Choose a 30-day, 45-day, or 13-month Gmail history window." },
       { status: 400, headers: { "Cache-Control": "no-store" } }
     );
@@ -304,7 +305,7 @@ async function handlePost(request: Request) {
     const sampleCandidates = getSampleConsolidatedCandidates(
       body.existingSubscriptions ?? []
     );
-    return NextResponse.json({
+    return gmailJson({
       success: true,
       mode: "sandbox",
       count: sampleCandidates.length,
@@ -323,7 +324,7 @@ async function handlePost(request: Request) {
   }
 
   if (!isSupabaseConfigured) {
-    return NextResponse.json(
+    return gmailJson(
       {
         success: false,
         error: "Live Gmail scans require a configured, signed-in account.",
@@ -338,7 +339,7 @@ async function handlePost(request: Request) {
     !userId ||
     session.userId !== userId
   ) {
-    const response = NextResponse.json(
+    const response = gmailJson(
       {
         success: false,
         error: "Please connect Gmail from your signed-in account before scanning.",
@@ -350,7 +351,7 @@ async function handlePost(request: Request) {
   }
 
   if (!isGmailEnabledForUser(userId)) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "Gmail discovery is disabled for this account by the server release gate." },
       { status: 403, headers: { "Cache-Control": "no-store" } }
     );
@@ -358,14 +359,14 @@ async function handlePost(request: Request) {
   const supabase = createSupabaseServerClient();
   try {
     if (!(await hasCurrentGmailConsent(supabase, userId))) {
-      return NextResponse.json(
+      return gmailJson(
         { success: false, error: "Current Gmail consent is required before scanning." },
         { status: 403, headers: { "Cache-Control": "no-store" } }
       );
     }
   } catch (error) {
-    console.error("Could not verify Gmail consent before scan:", error);
-    return NextResponse.json(
+    console.error("Could not verify Gmail consent before scan:");
+    return gmailJson(
       { success: false, error: "Gmail consent could not be verified." },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
@@ -373,7 +374,7 @@ async function handlePost(request: Request) {
 
   const feeGate = await assessFeeGate(userId);
   if (feeGate.blocked) {
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: feeGate.message, code: "fee_due" },
       { status: 402, headers: { "Cache-Control": "no-store" } }
     );
@@ -383,7 +384,7 @@ async function handlePost(request: Request) {
   const tokenExpiry = session.tokenExpiry || 0;
 
   if (!accessToken || Date.now() > tokenExpiry - 60000) {
-    const response = NextResponse.json(
+    const response = gmailJson(
       {
         success: false,
         error: "Gmail access expired. Reconnect your Google account to start a new scan.",
@@ -412,8 +413,8 @@ async function handlePost(request: Request) {
       "consume_gmail_scan_quota"
     );
     if (quotaError) {
-      console.error("Could not enforce Gmail scan quota:", quotaError);
-      return NextResponse.json(
+      console.error("Could not enforce Gmail scan quota:");
+      return gmailJson(
         {
           success: false,
           error: "Gmail scan limits could not be verified. Please try again later.",
@@ -425,7 +426,7 @@ async function handlePost(request: Request) {
     const quota = (quotaRows as GmailScanQuota[] | null)?.[0];
     if (!quota) {
       console.error("Gmail scan quota function returned no result.");
-      return NextResponse.json(
+      return gmailJson(
         {
           success: false,
           error: "Gmail scan limits could not be verified. Please try again later.",
@@ -434,7 +435,7 @@ async function handlePost(request: Request) {
       );
     }
     if (!quota.allowed) {
-      return NextResponse.json(
+      return gmailJson(
         {
           success: false,
           error: `Daily Gmail scan limit reached (${MAX_GMAIL_SCANS_PER_DAY} scans). Try again after ${quota.resets_at}.`,
@@ -486,7 +487,7 @@ async function handlePost(request: Request) {
     };
     if (!coverageRecorded) {
       if (coverageError) {
-        console.error("Could not record Gmail scan coverage:", coverageError);
+        console.error("Could not record Gmail scan coverage:");
       }
       coverageWarnings.push(
         "Scan coverage could not be saved to your account."
@@ -503,7 +504,7 @@ async function handlePost(request: Request) {
       allSearchLanesFailed &&
       coverage.laneCoverage.some((lane) => lane.errorStatus === 403);
     if (fatalErrorStatus === 401 || laneAuthenticationFailure) {
-      const response = NextResponse.json(
+      const response = gmailJson(
         {
           success: false,
           error: "Gmail authorization expired. Please reconnect your account.",
@@ -517,7 +518,7 @@ async function handlePost(request: Request) {
     }
 
     if (fatalErrorStatus === 403 || allSearchLanesForbidden) {
-      return NextResponse.json(
+      return gmailJson(
         {
           success: false,
           error:
@@ -533,7 +534,7 @@ async function handlePost(request: Request) {
       lanesScanned.length === 0 &&
       allSearchLanesFailed
     ) {
-      return NextResponse.json(
+      return gmailJson(
         {
           success: false,
           error: "Gmail could not complete any search categories. Please try again later.",
@@ -579,7 +580,7 @@ async function handlePost(request: Request) {
       })),
     }));
 
-    const response = NextResponse.json({
+    const response = gmailJson({
       success: true,
       mode: "live",
       count: safeCandidates.length,
@@ -598,7 +599,7 @@ async function handlePost(request: Request) {
     return response;
   } catch (error) {
     if (error instanceof GmailApiError) {
-      return NextResponse.json(
+      return gmailJson(
         {
           success: false,
           error:
@@ -612,7 +613,7 @@ async function handlePost(request: Request) {
       );
     }
 
-    return NextResponse.json(
+    return gmailJson(
       { success: false, error: "An error occurred while scanning Gmail." },
       { status: 502 }
     );

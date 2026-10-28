@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
+import { gmailJson } from "@/lib/connectors/gmail-response";
 import { isSessionEncryptionConfigured } from "@/lib/connectors/server-token-store";
 import {
   hasCurrentGmailConsent,
@@ -29,13 +30,13 @@ export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   const requestUrl = new URL(request.url);
   if (!origin || origin !== requestUrl.origin) {
-    return NextResponse.json(
+    return gmailJson(
       { configured: false, authUrl: null, message: "Untrusted request origin." },
       { status: 403, headers: { "Cache-Control": "no-store" } }
     );
   }
   if (!isSupabaseConfigured) {
-    return NextResponse.json({
+    return gmailJson({
       configured: false,
       authUrl: null,
       message:
@@ -46,7 +47,7 @@ export async function POST(request: Request) {
   const supabase = createSupabaseServerClient();
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) {
-    return NextResponse.json(
+    return gmailJson(
       {
         configured: false,
         authUrl: null,
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
     );
   }
   if (!isGmailEnabledForUser(authData.user.id)) {
-    return NextResponse.json(
+    return gmailJson(
       {
         configured: false,
         authUrl: null,
@@ -68,14 +69,14 @@ export async function POST(request: Request) {
 
   try {
     if (!(await hasCurrentGmailConsent(supabase, authData.user.id))) {
-      return NextResponse.json(
+      return gmailJson(
         { configured: false, authUrl: null, message: "Review and accept the Gmail disclosure before connecting." },
         { status: 403, headers: { "Cache-Control": "no-store" } }
       );
     }
   } catch (error) {
-    console.error("Could not verify Gmail consent:", error);
-    return NextResponse.json(
+    console.error("Could not verify Gmail consent:");
+    return gmailJson(
       { configured: false, authUrl: null, message: "Gmail consent could not be verified." },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
   if (!isSessionEncryptionConfigured()) {
-    return NextResponse.json({
+    return gmailJson({
       configured: false,
       authUrl: null,
       message:
@@ -94,7 +95,7 @@ export async function POST(request: Request) {
   }
 
   if (!clientId || !clientSecret) {
-    return NextResponse.json({
+    return gmailJson({
       configured: false,
       authUrl: null,
       message:
@@ -104,7 +105,7 @@ export async function POST(request: Request) {
 
   const appUrl = getAppUrl(request);
   if (!appUrl) {
-    return NextResponse.json(
+    return gmailJson(
       { configured: false, authUrl: null, message: "The server app URL is not configured." },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
@@ -130,7 +131,7 @@ export async function POST(request: Request) {
   authUrl.searchParams.set("code_challenge", codeChallenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
 
-  const response = NextResponse.json(
+  const response = gmailJson(
     { configured: true, authUrl: authUrl.toString() },
     { headers: { "Cache-Control": "no-store" } }
   );

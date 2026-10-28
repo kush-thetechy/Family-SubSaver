@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { gmailJson } from "@/lib/connectors/gmail-response";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DiscoveryEvidence, GmailHistoryRange, GmailScanCoverage } from "@/types";
 import {
@@ -79,13 +80,13 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
     const { data, error } = await a.supabase.rpc("consume_gmail_scan_quota");
     const quota = (data as { allowed: boolean; resets_at?: string; scans_remaining?: number }[] | null)?.[0];
     if (error || !quota) {
-      return NextResponse.json(
+      return gmailJson(
         { success: false, error: "Gmail scan limits could not be verified. Please try again later." },
         { status: 503, headers: NO_STORE }
       );
     }
     if (!quota.allowed) {
-      return NextResponse.json(
+      return gmailJson(
         {
           success: false,
           error: `Daily Gmail scan limit reached (${MAX_GMAIL_SCANS_PER_DAY} scans). Try again after ${quota.resets_at}.`,
@@ -98,7 +99,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
   } else {
     const opened = openScanCursor(a.userId, a.cursor);
     if (!opened || opened.range !== a.historyRange) {
-      return NextResponse.json(
+      return gmailJson(
         { success: false, error: "This scan expired or is no longer valid. Start a new scan." },
         { status: 400, headers: NO_STORE }
       );
@@ -112,7 +113,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
   const s = result.state;
 
   if (s.fatalStatus === 401) {
-    const response = NextResponse.json(
+    const response = gmailJson(
       { success: false, error: "Gmail authorization expired. Please reconnect your account." },
       { status: 401, headers: NO_STORE }
     );
@@ -120,7 +121,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
     return response;
   }
   if (s.fatalStatus === 403) {
-    return NextResponse.json(
+    return gmailJson(
       {
         success: false,
         error:
@@ -162,7 +163,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
   }
 
   const resumable = result.resumable;
-  const response = NextResponse.json(
+  const response = gmailJson(
     {
       success: true,
       mode: "live",
