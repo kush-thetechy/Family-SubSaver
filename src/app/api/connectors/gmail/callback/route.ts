@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { gmailJson } from "@/lib/connectors/gmail-response";
 import {
   createServerSession,
   isSessionEncryptionConfigured,
@@ -74,13 +75,13 @@ export async function GET(request: Request) {
   const callbackUrl = new URL(request.url);
   const appUrl = getAppUrl(request);
   if (!appUrl) {
-    return NextResponse.json(
+    return gmailJson(
       { error: "The server app URL is not configured." },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
   }
   if (callbackUrl.origin !== new URL(appUrl).origin) {
-    return NextResponse.json(
+    return gmailJson(
       { error: "Gmail OAuth callback origin is not configured correctly." },
       { status: 400, headers: { "Cache-Control": "no-store" } }
     );
@@ -157,7 +158,7 @@ export async function GET(request: Request) {
       );
     }
   } catch (error) {
-    console.error("Could not verify Gmail consent during callback:", error);
+    console.error("Could not verify Gmail consent during callback:");
     return redirectToImport("Gmail consent could not be verified.", appUrl);
   }
 

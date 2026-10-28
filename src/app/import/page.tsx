@@ -1853,6 +1853,12 @@ function ImportContent() {
                 ))}
               </div>
 
+              <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                Adding selected subscriptions saves their service, amount, billing cycle and dates
+                to your account until you delete them or delete your account. It does not save
+                the original Gmail messages. You can export your records or delete Gmail-imported
+                subscriptions in Settings.
+              </p>
               <div className="sticky bottom-20 md:bottom-4 z-10 flex justify-end rounded-2xl bg-white/90 p-2 backdrop-blur dark:bg-slate-900/90">
                 <button
                   type="button"

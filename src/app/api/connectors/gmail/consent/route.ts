@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { gmailJson } from "@/lib/connectors/gmail-response";
 import { GMAIL_CONSENT_VERSION } from "@/lib/connectors/gmail-policy";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -16,50 +17,50 @@ function hasTrustedOrigin(request: Request): boolean {
 
 export async function POST(request: Request) {
   if (!hasTrustedOrigin(request)) {
-    return NextResponse.json({ error: "Untrusted request origin." }, { status: 403 });
+    return gmailJson({ error: "Untrusted request origin." }, { status: 403 });
   }
   if (!isSupabaseConfigured) {
-    return NextResponse.json({ error: "Account storage is not configured." }, { status: 503 });
+    return gmailJson({ error: "Account storage is not configured." }, { status: 503 });
   }
 
   const supabase = createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
-    return NextResponse.json({ error: "Sign in before consenting to Gmail access." }, { status: 401 });
+    return gmailJson({ error: "Sign in before consenting to Gmail access." }, { status: 401 });
   }
 
   const { error } = await supabase.rpc("grant_own_gmail_consent", {
     consent_version: GMAIL_CONSENT_VERSION,
   });
   if (error) {
-    console.error("Could not record Gmail consent:", error);
-    return NextResponse.json({ error: "Could not record Gmail consent." }, { status: 503 });
+    console.error("Could not record Gmail consent:");
+    return gmailJson({ error: "Could not record Gmail consent." }, { status: 503 });
   }
 
-  return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
+  return gmailJson({ success: true }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function DELETE(request: Request) {
   if (!hasTrustedOrigin(request)) {
-    return NextResponse.json({ error: "Untrusted request origin." }, { status: 403 });
+    return gmailJson({ error: "Untrusted request origin." }, { status: 403 });
   }
   if (!isSupabaseConfigured) {
-    return NextResponse.json({ error: "Account storage is not configured." }, { status: 503 });
+    return gmailJson({ error: "Account storage is not configured." }, { status: 503 });
   }
 
   const supabase = createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
-    return NextResponse.json({ error: "Sign in before changing Gmail consent." }, { status: 401 });
+    return gmailJson({ error: "Sign in before changing Gmail consent." }, { status: 401 });
   }
 
   const { error } = await supabase.rpc("withdraw_own_gmail_consent", {
     consent_version: GMAIL_CONSENT_VERSION,
   });
   if (error) {
-    console.error("Could not withdraw Gmail consent:", error);
-    return NextResponse.json({ error: "Could not withdraw Gmail consent." }, { status: 503 });
+    console.error("Could not withdraw Gmail consent:");
+    return gmailJson({ error: "Could not withdraw Gmail consent." }, { status: 503 });
   }
 
-  return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
+  return gmailJson({ success: true }, { headers: { "Cache-Control": "no-store" } });
 }
