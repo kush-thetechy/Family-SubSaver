@@ -120,6 +120,8 @@ function ImportContent() {
   const [gmailTokenAvailable, setGmailTokenAvailable] = useState(false);
   const [gmailStatusLoaded, setGmailStatusLoaded] = useState(false);
   const [gmailSetupMessage, setGmailSetupMessage] = useState("");
+  // Composio's Google app asks for broader mailbox access than our own read-only client.
+  const [gmailViaComposio, setGmailViaComposio] = useState(false);
   const [gmailEmail, setGmailEmail] = useState<string | null>(null);
   const [gmailConnectionId, setGmailConnectionId] = useState<string | null>(null);
   const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
@@ -172,6 +174,7 @@ function ImportContent() {
           message?: string;
           latestCoverage?: GmailScanCoverage | null;
           coverageHistoryAvailable?: boolean;
+          provider?: "composio" | "google";
         };
       })
       .then((status) => {
@@ -185,6 +188,7 @@ function ImportContent() {
           status.coverageHistoryAvailable !== false
         );
         setGmailSetupMessage(status.message ?? "");
+        setGmailViaComposio(status.provider === "composio");
         if (status.email) setGmailEmail(status.email);
         setGmailConnectionId(status.connectionId ?? null);
       })
@@ -2256,7 +2260,7 @@ function ImportContent() {
                   Connect Gmail for Subscription Discovery
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Read-only keyword search of the past 45 days
+                  We only read: a keyword search of the past 45 days
                 </p>
               </div>
             </div>
@@ -2269,13 +2273,20 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches the past 45 days across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run and 10,000 per scan, then stops and says coverage is partial. Results are never described as the whole inbox. A match may contain unrelated text.
+                  <strong>Access and app-side limits:</strong>{" "}
+                  {gmailViaComposio
+                    ? "You connect through Composio, a service that relays Gmail requests for us. Google will ask you to give Composio full Gmail access (read, send and delete), which is broader than we need. Our app only ever asks Composio to search and read messages; it never sends, changes or deletes email."
+                    : "Google grants read-only access to Gmail messages; it does not restrict access to these results."}{" "}
+                  With your updated consent, each scan you start searches the past 45 days across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run and 10,000 per scan, then stops and says coverage is partial. Results are never described as the whole inbox. A match may contain unrelated text.
                 </li>
                 <li>
                   <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; aggregate scan coverage is saved to your account and retained until you delete your account. Withdrawing consent stops future scans but does not delete prior coverage. This does not mean message data never leaves your device or that Google limits the scope to recent messages.
                 </li>
                 <li>
-                  <strong>Manual scans only:</strong> We do not run background scans. The app requests only Gmail read-only scope and does not send, alter, or delete email.
+                  <strong>Manual scans only:</strong> We do not run background scans.{" "}
+                  {gmailViaComposio
+                    ? "Matched messages pass through Composio on their way to our server. You can remove access any time with Disconnect in Settings, or from your Google Account."
+                    : "The app requests only Gmail read-only scope and does not send, alter, or delete email."}
                 </li>
                 <li>
                   <strong>Review and control:</strong> Extracted structured candidates are shown for your review; only confirmed records are saved. Imports are private to your account, and Settings/Import controls separately withdraw consent, disconnect Gmail, and delete Gmail-tagged records.
@@ -2292,7 +2303,9 @@ function ImportContent() {
                 className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
               />
               <span>
-                I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above, including the 45-day search window and aggregate coverage recording.
+                {gmailViaComposio
+                  ? "I understand and consent to connecting Gmail through Composio, to the access Google will show me, and to server-side processing of matched Gmail messages for the subscription discovery described above, including the 45-day search window and aggregate coverage recording."
+                  : "I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above, including the 45-day search window and aggregate coverage recording."}
               </span>
             </label>
 

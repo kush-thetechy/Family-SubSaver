@@ -42,4 +42,27 @@ describe("Gmail release controls", () => {
     vi.stubEnv("GMAIL_PRIVACY_REVIEW_CONFIRMED", "true");
     expect(isGmailEnabledForUser("any-user")).toBe(true);
   });
+
+  it("opens to every signed-in user only with Composio active and the explicit owner switch", () => {
+    vi.stubEnv("GMAIL_MODE", "test");
+    vi.stubEnv("GMAIL_TESTER_USER_IDS", "owner");
+    vi.stubEnv("GMAIL_COMPOSIO_OPEN_TO_ALL", "true");
+    // Switch alone does nothing while the Google path is in use.
+    vi.stubEnv("GMAIL_PROVIDER", "");
+    expect(isGmailEnabledForUser("someone")).toBe(false);
+    // Composio selected but no API key: still closed.
+    vi.stubEnv("GMAIL_PROVIDER", "composio");
+    vi.stubEnv("COMPOSIO_API_KEY", "");
+    expect(isGmailEnabledForUser("someone")).toBe(false);
+    vi.stubEnv("COMPOSIO_API_KEY", "key");
+    expect(isGmailEnabledForUser("someone")).toBe(true);
+    // Without the switch, the allowlist still applies.
+    vi.stubEnv("GMAIL_COMPOSIO_OPEN_TO_ALL", "false");
+    expect(isGmailEnabledForUser("someone")).toBe(false);
+    expect(isGmailEnabledForUser("owner")).toBe(true);
+    // Disabled mode always wins.
+    vi.stubEnv("GMAIL_COMPOSIO_OPEN_TO_ALL", "true");
+    vi.stubEnv("GMAIL_MODE", "disabled");
+    expect(isGmailEnabledForUser("someone")).toBe(false);
+  });
 });

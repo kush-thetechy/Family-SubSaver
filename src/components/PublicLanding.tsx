@@ -37,7 +37,7 @@ export function PublicLanding() {
         Gmail, only if you connect it
       </h2>
       <ul className="mt-3 list-disc pl-5 space-y-2 text-slate-600 dark:text-slate-300">
-        <li>Read-only access. Scans run only when you click. No background scanning.</li>
+        <li>We only read your email; we never send, change or delete it. Scans run only when you click. No background scanning.</li>
         <li>
           When you start a scan, our server searches Gmail for matching
           subscription receipts, renewals and payment mandate messages. It

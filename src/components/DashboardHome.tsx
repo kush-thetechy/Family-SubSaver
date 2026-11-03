@@ -39,7 +39,7 @@ function FirstRun({ name }: { name: string }) {
         </div>
         <h2 className="mt-4 text-lg font-bold text-slate-900 dark:text-white">Scan your Gmail</h2>
         <ul className="mx-auto mt-3 max-w-sm space-y-1.5 text-left text-xs text-slate-600 dark:text-slate-300">
-          <li>• Read-only: we can&apos;t send, change or delete email</li>
+          <li>• We only read: we never send, change or delete email</li>
           <li>• Only receipts, renewals and payment alerts from the past 45 days</li>
           <li>• You review every result before anything is saved</li>
         </ul>

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isComposioGmailProvider } from "./composio-gmail";
 
 export const GMAIL_CONSENT_VERSION = "gmail-discovery-v3-batched";
 
@@ -19,6 +20,12 @@ export function getGmailMode(): GmailMode {
 export function isGmailEnabledForUser(userId: string): boolean {
   const mode = getGmailMode();
   if (mode === "disabled") return false;
+
+  // Composio-managed Gmail connects through Composio's own Google app, so this app's
+  // unverified Google OAuth client is not in the path. The owner opts in explicitly.
+  if (isComposioGmailProvider() && process.env.GMAIL_COMPOSIO_OPEN_TO_ALL === "true") {
+    return true;
+  }
 
   if (mode === "test") {
     const allowedUserIds = new Set(

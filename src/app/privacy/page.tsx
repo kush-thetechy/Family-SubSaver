@@ -1,7 +1,9 @@
 import { LegalPage } from "@/components/LegalPage";
+import { isComposioGmailProvider } from "@/lib/connectors/composio-gmail";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Privacy - Family SubSaver" };
 export default function Page() {
+  const viaComposio = isComposioGmailProvider();
   return (
     <LegalPage title="Privacy policy">
       {(c) => (
@@ -17,7 +19,11 @@ export default function Page() {
           </ul>
           <h2 className="font-semibold">Gmail, only if you connect it</h2>
           <ul className="list-disc pl-5">
-            <li>Read-only access. Scans run only when you click. No background scanning.</li>
+            {viaComposio ? (
+              <li>Gmail is connected through Composio (composio.dev), a service that relays our Gmail requests. Google asks you to grant Composio full Gmail access, which is broader than we need; our app only asks Composio to search and read matching messages and never sends, changes or deletes email. Matched messages pass through Composio under its own privacy policy. Disconnecting in Settings asks Composio to delete the connection and revoke its Google access. Scans run only when you click. No background scanning.</li>
+            ) : (
+              <li>Read-only access. Scans run only when you click. No background scanning.</li>
+            )}
             <li>Screenshot imports are read in your browser and are not uploaded.</li>
             <li>When you start a scan, our server searches Gmail for matching subscription receipts, renewals and payment mandate messages. It processes matched message text in memory to extract subscription details and show suggestions. Attachments are not fetched. The app does not intentionally write message bodies or access tokens to its database or application logs. Subscription records are saved only after you confirm them. We also keep consent and withdrawal events, scan quota and coverage counts, import deduplication keys, and the first-use record described above. Vercel and Supabase process operational metadata under their own policies; these logs are separate from your saved subscription list.</li>
             <li>The Gmail access token is held in an encrypted, HttpOnly session cookie for no more than one hour or its remaining token lifetime. An encrypted, user-bound scan cursor can contain pending message identifiers and pagination state for up to 30 minutes. Neither is stored in our database. Disconnecting clears this browser&apos;s Gmail session and attempts revocation with Google; if Google revocation fails, the app tells you so.</li>

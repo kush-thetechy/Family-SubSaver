@@ -165,6 +165,8 @@ async function handleGet() {
     tokenAvailable,
     latestCoverage,
     coverageHistoryAvailable,
+    // Lets the consent screen describe the access Google is actually asked for.
+    provider: isComposioGmailProvider() ? "composio" : "google",
     email: connected ? session?.email ?? null : null,
     connectionId:
       connected && session
