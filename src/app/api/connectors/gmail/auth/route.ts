@@ -2,7 +2,12 @@ import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { isComposioGmailProvider } from "@/lib/connectors/composio-gmail";
 import { createComposioConnectLink } from "@/lib/connectors/composio-connect";
-import { saveComposioAccount } from "@/lib/connectors/composio-account-store";
+import {
+  getComposioAccount,
+  hashComposioState,
+  savePendingComposioAccount,
+} from "@/lib/connectors/composio-account-store";
+import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { gmailJson } from "@/lib/connectors/gmail-response";
 import { isSessionEncryptionConfigured } from "@/lib/connectors/server-token-store";
 import {
@@ -96,20 +101,46 @@ export async function POST(request: Request) {
       );
     }
     try {
+      const admin = createSupabaseAdminClient();
+      const existing = await getComposioAccount(admin, authData.user.id);
+      if (existing?.connectedAccountId) {
+        // Already linked: never create a second link or replace the account. The callback
+        // re-validates the binding and issues a fresh session. Switching Gmail accounts
+        // requires an explicit disconnect first.
+        return gmailJson(
+          {
+            configured: true,
+            authUrl: `${appUrlForComposio}/api/connectors/gmail/composio-callback?resume=1`,
+            connectedGmail: existing.gmailEmail ?? null,
+          },
+          { headers: { "Cache-Control": "no-store" } }
+        );
+      }
+      const state = randomBytes(32).toString("hex");
       const link = await createComposioConnectLink({
         apiKey: process.env.COMPOSIO_API_KEY as string,
         authConfigId,
         appUserId: authData.user.id,
-        callbackUrl: `${appUrlForComposio}/api/connectors/gmail/composio-callback`,
+        callbackUrl: `${appUrlForComposio}/api/connectors/gmail/composio-callback?state=${state}`,
       });
-      await saveComposioAccount(supabase, authData.user.id, {
-        connectedAccountId: link.connectedAccountId,
-        authConfigId,
+      await savePendingComposioAccount(admin, authData.user.id, {
+        accountId: link.connectedAccountId,
+        stateHash: hashComposioState(state),
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       });
-      return gmailJson(
+      const response = gmailJson(
         { configured: true, authUrl: link.redirectUrl },
         { headers: { "Cache-Control": "no-store" } }
       );
+      // Session binding: the same browser that started the link must finish it.
+      response.cookies.set("fss_composio_state", state, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/api/connectors/gmail",
+        maxAge: 15 * 60,
+      });
+      return response;
     } catch {
       return gmailJson(
         { configured: false, authUrl: null, message: "Could not start the Gmail connection." },

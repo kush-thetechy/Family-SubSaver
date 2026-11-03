@@ -166,8 +166,18 @@ export function isComposioBulkFetchEnabled(
 
 // Hydrated messages from a bulk page, consumed once by the per-message get that follows.
 // Keyed by user+account+id so one user's data can never be served to another.
-const bulkCache = new Map<string, Record<string, unknown>>();
+// In memory only (never persisted), consumed once, bounded size, and expires after 5 minutes.
+const bulkCache = new Map<string, { value: Record<string, unknown>; expires: number }>();
 const BULK_CACHE_MAX = 2000;
+export const COMPOSIO_BULK_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** Drops every cached message for one app user (called on disconnect/withdraw/delete). */
+export function clearComposioBulkCacheForUser(appUserId: string): void {
+  const prefix = `${appUserId}:`;
+  for (const key of Array.from(bulkCache.keys())) {
+    if (key.startsWith(prefix)) bulkCache.delete(key);
+  }
+}
 
 function cacheKey(t: { appUserId: string; connectedAccountId: string }, id: string): string {
   return `${t.appUserId}:${t.connectedAccountId}:${id}`;
@@ -208,7 +218,10 @@ export async function composioGmailRequest<T>(
       const id = String((m as { id?: unknown }).id ?? "");
       if (!id) continue;
       if (bulkCache.size >= BULK_CACHE_MAX) bulkCache.delete(bulkCache.keys().next().value as string);
-      bulkCache.set(cacheKey(target, id), m);
+      bulkCache.set(cacheKey(target, id), {
+        value: m,
+        expires: Date.now() + COMPOSIO_BULK_CACHE_TTL_MS,
+      });
     }
     // List every id Gmail reported, including unrecoverable ones, so the pipeline's own
     // per-message fetch fails visibly and raises its incomplete-coverage warning.
@@ -250,7 +263,7 @@ export async function composioGmailRequest<T>(
     const cached = bulkCache.get(key);
     if (cached) {
       bulkCache.delete(key);
-      return cached as T;
+      if (cached.expires > Date.now()) return cached.value as T;
     }
     const data = await executeComposioTool<Record<string, unknown>>(
       COMPOSIO_GMAIL_FETCH_MESSAGE,
