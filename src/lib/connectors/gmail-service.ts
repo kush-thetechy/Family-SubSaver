@@ -9,6 +9,7 @@ import {
   GmailScanLaneCoverage,
 } from "@/types";
 import { rupeesToPaise } from "../calculations";
+import { composioGmailRequest, isComposioGmailProvider } from "./composio-gmail";
 
 export const MAX_GMAIL_SCAN_MESSAGES_PER_DAY = 12000;
 
@@ -1593,6 +1594,11 @@ export async function fetchGmailJson<T>(
   accessToken: string,
   options: { deadline?: number } = {}
 ): Promise<T> {
+  if (isComposioGmailProvider()) {
+    // Composio-managed Gmail provider: `accessToken` carries the app user id and the
+    // call is translated into a Composio tool execution. See composio-gmail.ts.
+    return composioGmailRequest<T>(url, accessToken);
+  }
   let response!: Response;
   for (let attempt = 0; ; attempt += 1) {
     response = await fetch(url, {
