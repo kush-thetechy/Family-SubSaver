@@ -3,6 +3,7 @@ import { gmailJson } from "@/lib/connectors/gmail-response";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DiscoveryEvidence, GmailHistoryRange, GmailScanCoverage } from "@/types";
 import {
+  GMAIL_RUN_MESSAGE_CEILING,
   GmailBatchState,
   newGmailBatchState,
   resumeGmailBatchState,
@@ -90,10 +91,13 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
     if (a.resume) state = resumeGmailBatchState(state);
   }
 
-  // Non-consuming pre-flight check: quota is by emails actually processed,
-  // recorded below per batch, so cancelled scans cost nothing.
+  // Race-safe quota: atomically reserve this batch's worst-case budget, then
+  // settle below with the messages actually processed. Cancelled or failed
+  // batches refund, so they cost nothing.
   {
-    const { data, error } = await a.supabase.rpc("check_gmail_message_quota");
+    const { data, error } = await a.supabase.rpc("reserve_gmail_message_quota", {
+      p_reserve: GMAIL_RUN_MESSAGE_CEILING,
+    });
     const quota = (data as { allowed: boolean; resets_at?: string; messages_remaining?: number }[] | null)?.[0];
     if (error || !quota) {
       return gmailJson(
@@ -113,14 +117,29 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
     }
   }
 
-  const result = await runGmailBatch(a.accessToken, state);
-  if (result.state.runFetched > 0) {
+  let result;
+  try {
+    result = await runGmailBatch(a.accessToken, state);
+  } catch (batchError) {
+    try {
+      await a.supabase.rpc("record_gmail_messages_processed", {
+        p_count: -GMAIL_RUN_MESSAGE_CEILING,
+      });
+    } catch {
+      console.error("Could not refund Gmail message reservation.");
+    }
+    throw batchError;
+  }
+  // Count only messages actually retrieved and processed in this batch;
+  // refund the rest of the reservation.
+  const messagesProcessed = result.state.fetched - state.fetched;
+  {
     const { error: usageError } = await a.supabase.rpc(
       "record_gmail_messages_processed",
-      { p_count: result.state.runFetched }
+      { p_count: messagesProcessed - GMAIL_RUN_MESSAGE_CEILING }
     );
     if (usageError) {
-      console.error("Could not record Gmail message usage.");
+      console.error("Could not settle Gmail message usage.");
     }
   }
   const warnings: string[] = [];

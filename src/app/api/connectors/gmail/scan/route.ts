@@ -9,6 +9,7 @@ import {
 } from "@/lib/connectors/server-token-store";
 import {
   GmailApiError,
+  MAX_GMAIL_MESSAGES_PER_SCAN,
   MAX_GMAIL_SCAN_MESSAGES_PER_DAY,
   getGmailHistoryRangeLabel,
   getSampleConsolidatedCandidates,
@@ -410,7 +411,8 @@ async function handlePost(request: Request) {
   // Execute live multi-lane search
   try {
     const { data: quotaRows, error: quotaError } = await supabase.rpc(
-      "check_gmail_message_quota"
+      "reserve_gmail_message_quota",
+      { p_reserve: MAX_GMAIL_MESSAGES_PER_SCAN }
     );
     if (quotaError) {
       console.error("Could not enforce Gmail scan quota:");
@@ -451,7 +453,22 @@ async function handlePost(request: Request) {
       existingSubscriptions: body.existingSubscriptions,
     };
 
-    const scanResult = await searchGmailMultiLane(accessToken, scanOptions);
+    // Race-safe quota: the reserve above holds MAX_GMAIL_MESSAGES_PER_SCAN;
+    // settle below with the messages actually retrieved and processed.
+    // A scan that dies or is cancelled before fetching refunds fully.
+    let scanResult;
+    try {
+      scanResult = await searchGmailMultiLane(accessToken, scanOptions);
+    } catch (scanError) {
+      try {
+        await supabase.rpc("record_gmail_messages_processed", {
+          p_count: -MAX_GMAIL_MESSAGES_PER_SCAN,
+        });
+      } catch {
+        console.error("Could not refund Gmail message reservation.");
+      }
+      throw scanError;
+    }
     const {
       candidates,
       totalMessagesScanned,
@@ -460,13 +477,13 @@ async function handlePost(request: Request) {
       coverage,
       fatalErrorStatus,
     } = scanResult;
-    if (totalMessagesScanned > 0) {
+    {
       const { error: usageError } = await supabase.rpc(
         "record_gmail_messages_processed",
-        { p_count: totalMessagesScanned }
+        { p_count: coverage.messagesFetched - MAX_GMAIL_MESSAGES_PER_SCAN }
       );
       if (usageError) {
-        console.error("Could not record Gmail message usage.");
+        console.error("Could not settle Gmail message usage.");
       }
     }
     const coverageWarnings = [...warnings];

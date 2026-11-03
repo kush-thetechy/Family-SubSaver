@@ -6,7 +6,7 @@ const st = {
   quotaCalls: 0,
   recordCalls: 0,
   recordedCounts: [] as number[],
-  runFetched: 40,
+  fetchedDelta: 40,
   coverageCalls: 0,
   done: false,
 };
@@ -16,9 +16,9 @@ vi.mock("@/lib/supabase-server", () => ({
   createSupabaseServerClient: () => ({
     auth: { getUser: async () => ({ data: { user: { id: "u1" } }, error: null }) },
     rpc: async (name: string, args?: unknown) => {
-      if (name === "check_gmail_message_quota") {
+      if (name === "reserve_gmail_message_quota") {
         st.quotaCalls += 1;
-        return { data: [{ allowed: true, messages_remaining: 1999, resets_at: "x" }], error: null };
+        return { data: [{ allowed: true, messages_remaining: 10000, resets_at: "x" }], error: null };
       }
       if (name === "record_gmail_messages_processed") {
         st.recordCalls += 1;
@@ -57,7 +57,7 @@ vi.mock("@/lib/connectors/gmail-batch", async () => {
   return {
     ...actual,
     runGmailBatch: async (_t: string, state: any) => ({
-      state: { ...state, attempted: 40, selected: 40, fetched: 40, runFetched: st.runFetched, pending: [] },
+      state: { ...state, attempted: 40, selected: 40, fetched: state.fetched + st.fetchedDelta, runFetched: 40, pending: [] },
       evidence: [
         { id: "raw-id", message_id: "RAWMSGID123", source: "gmail", evidence_type: "receipt", date: "2026-01-01", sender: "a@b.com", subject: "secret subject", summary: "s" },
       ],
@@ -88,7 +88,7 @@ beforeEach(() => {
   st.quotaCalls = 0;
   st.recordCalls = 0;
   st.recordedCounts = [];
-  st.runFetched = 40;
+  st.fetchedDelta = 40;
   st.coverageCalls = 0;
   st.done = false;
 });
@@ -101,7 +101,7 @@ describe("batched gmail scan route", () => {
     expect(j1.done).toBe(false);
     expect(st.quotaCalls).toBe(1);
     expect(st.recordCalls).toBe(1);
-    expect(st.recordedCounts).toEqual([40]);
+    expect(st.recordedCounts).toEqual([-1960]);
     const text = JSON.stringify(j1);
     expect(text).not.toContain("RAWMSGID123");
     expect(text).not.toContain("a@b.com");
@@ -114,16 +114,17 @@ describe("batched gmail scan route", () => {
     expect(r2.status).toBe(200);
     expect(st.quotaCalls).toBe(2);
     expect(st.recordCalls).toBe(2);
-    expect(st.recordedCounts).toEqual([40, 40]);
+    expect(st.recordedCounts).toEqual([-1960, -1960]);
     expect(st.coverageCalls).toBe(1);
   });
 
-  it("records no usage when a batch processed no emails (cancelled before fetch)", async () => {
-    st.runFetched = 0;
+  it("fully refunds the reservation when a batch processed no emails (cancelled before fetch)", async () => {
+    st.fetchedDelta = 0;
     const r1 = await call({ mode: "live", batch: true, historyRange: "13m" });
     expect(r1.status).toBe(200);
     expect(st.quotaCalls).toBe(1);
-    expect(st.recordCalls).toBe(0);
+    expect(st.recordCalls).toBe(1);
+    expect(st.recordedCounts).toEqual([-2000]);
   });
 
   it("stops at the next batch when consent is withdrawn or the gate closes", async () => {
