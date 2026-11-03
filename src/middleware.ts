@@ -9,7 +9,9 @@ export async function middleware(request: NextRequest) {
   const demoModeEnabled =
     process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE === "true";
   const isLoginPage = request.nextUrl.pathname === "/login";
-  const isAuthCallback = request.nextUrl.pathname === "/auth/callback";
+  const isAuthCallback =
+    request.nextUrl.pathname === "/auth/callback" ||
+    request.nextUrl.pathname === "/auth/confirm";
   const isJoinPage =
     process.env.NEXT_PUBLIC_ENABLE_FAMILY_LINK === "true" &&
     request.nextUrl.pathname === "/join";
