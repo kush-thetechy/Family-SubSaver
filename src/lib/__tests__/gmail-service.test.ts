@@ -251,7 +251,11 @@ By subscribing, you authorise us to charge you the subscription cost (as describ
     expect(evidence?.order_id).toBe("GPA.3371-9881-7499-93667..1");
     expect(evidence?.frequency_raw).toBe("monthly");
 
-    const candidates = consolidateEvidenceToCandidates([evidence!]);
+    const candidates = consolidateEvidenceToCandidates(
+      [evidence!],
+      [],
+      new Date("2026-10-21T00:00:00.000Z")
+    );
     expect(candidates).toHaveLength(1);
     expect(candidates[0]).toMatchObject({
       service_name: "Todoist",
@@ -319,7 +323,11 @@ Payment Method: MasterCard ending in 1234
     expect(evidence?.frequency_raw).toBe("monthly");
     expect(evidence?.renewal_date).toBe("2026-10-28");
 
-    const candidates = consolidateEvidenceToCandidates([evidence!]);
+    const candidates = consolidateEvidenceToCandidates(
+      [evidence!],
+      [],
+      new Date("2026-10-21T00:00:00.000Z")
+    );
     expect(candidates).toHaveLength(1);
     expect(candidates[0].service_name).toBe("YouTube Premium");
     expect(candidates[0].amount_rupees).toBe(195);
