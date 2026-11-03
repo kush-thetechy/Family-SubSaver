@@ -460,12 +460,14 @@ async function handlePost(request: Request) {
     try {
       scanResult = await searchGmailMultiLane(accessToken, scanOptions);
     } catch (scanError) {
+      const partial =
+        (scanError as { partialFetched?: number } | null)?.partialFetched ?? 0;
       try {
         await supabase.rpc("record_gmail_messages_processed", {
-          p_count: -MAX_GMAIL_MESSAGES_PER_SCAN,
+          p_count: partial - MAX_GMAIL_MESSAGES_PER_SCAN,
         });
       } catch {
-        console.error("Could not refund Gmail message reservation.");
+        console.error("Could not settle Gmail message reservation.");
       }
       throw scanError;
     }

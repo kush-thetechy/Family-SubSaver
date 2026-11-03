@@ -9,6 +9,7 @@ const st = {
   fetchedDelta: 40,
   coverageCalls: 0,
   done: false,
+  throwWithPartial: null as number | null,
 };
 
 vi.mock("@/lib/supabase", () => ({ isSupabaseConfigured: true }));
@@ -56,7 +57,13 @@ vi.mock("@/lib/connectors/gmail-batch", async () => {
   const actual = await vi.importActual<typeof import("@/lib/connectors/gmail-batch")>("@/lib/connectors/gmail-batch");
   return {
     ...actual,
-    runGmailBatch: async (_t: string, state: any) => ({
+    runGmailBatch: async (_t: string, state: any) => {
+      if (st.throwWithPartial !== null) {
+        const e = new Error("mid-batch failure") as Error & { partialFetched?: number };
+        e.partialFetched = st.throwWithPartial;
+        throw e;
+      }
+      return {
       state: { ...state, attempted: 40, selected: 40, fetched: state.fetched + st.fetchedDelta, runFetched: 40, pending: [] },
       evidence: [
         { id: "raw-id", message_id: "RAWMSGID123", source: "gmail", evidence_type: "receipt", date: "2026-01-01", sender: "a@b.com", subject: "secret subject", summary: "s" },
@@ -64,7 +71,8 @@ vi.mock("@/lib/connectors/gmail-batch", async () => {
       done: st.done,
       truncated: false,
       resumable: false,
-    }),
+      };
+    },
   };
 });
 
@@ -89,6 +97,7 @@ beforeEach(() => {
   st.recordCalls = 0;
   st.recordedCounts = [];
   st.fetchedDelta = 40;
+  st.throwWithPartial = null;
   st.coverageCalls = 0;
   st.done = false;
 });
@@ -125,6 +134,12 @@ describe("batched gmail scan route", () => {
     expect(st.quotaCalls).toBe(1);
     expect(st.recordCalls).toBe(1);
     expect(st.recordedCounts).toEqual([-2000]);
+  });
+
+  it("settles only the unprocessed remainder when a batch fails after partial work", async () => {
+    st.throwWithPartial = 50;
+    await call({ mode: "live", batch: true, historyRange: "13m" }).catch(() => {});
+    expect(st.recordedCounts).toEqual([-1950]);
   });
 
   it("stops at the next batch when consent is withdrawn or the gate closes", async () => {

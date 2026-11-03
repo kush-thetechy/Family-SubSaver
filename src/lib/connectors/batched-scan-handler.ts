@@ -121,12 +121,14 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
   try {
     result = await runGmailBatch(a.accessToken, state);
   } catch (batchError) {
+    const partial =
+      (batchError as { partialFetched?: number } | null)?.partialFetched ?? 0;
     try {
       await a.supabase.rpc("record_gmail_messages_processed", {
-        p_count: -GMAIL_RUN_MESSAGE_CEILING,
+        p_count: partial - GMAIL_RUN_MESSAGE_CEILING,
       });
     } catch {
-      console.error("Could not refund Gmail message reservation.");
+      console.error("Could not settle Gmail message reservation.");
     }
     throw batchError;
   }

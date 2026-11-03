@@ -137,6 +137,8 @@ export async function runGmailBatch(
   const seen = new Set<string>();
   for (let i = 0; i + HASH_HEX <= state.seen.length; i += HASH_HEX) seen.add(state.seen.slice(i, i + HASH_HEX));
   const evidence: DiscoveryEvidence[] = [];
+  const fetchedAtStart = state.fetched;
+  try {
 
   const fetchPending = async () => {
     while (state.pending.length > 0 && !state.fatalStatus && now() < hard) {
@@ -240,4 +242,14 @@ export async function runGmailBatch(
   }
   const resumable = done && truncatedByCeiling && !state.totalCeilingHit && !state.fatalStatus;
   return { evidence, state, done, truncated, resumable };
+  } catch (error) {
+    // Quota: a throw after partial processing must still settle the messages
+    // actually fetched in this batch, so the handler refunds only the
+    // unprocessed remainder.
+    if (error instanceof Error) {
+      (error as Error & { partialFetched?: number }).partialFetched =
+        state.fetched - fetchedAtStart;
+    }
+    throw error;
+  }
 }

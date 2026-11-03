@@ -1835,6 +1835,7 @@ export async function searchGmailMultiLane(
   let successfulMessageFetches = 0;
   let fatalErrorStatus: number | undefined;
 
+  try {
   for (let i = 0; i < messageIdList.length; i += 5) {
     const chunk = messageIdList.slice(i, i + 5);
     const chunkResults = await Promise.all(
@@ -1923,6 +1924,15 @@ export async function searchGmailMultiLane(
     coverage,
     fatalErrorStatus,
   };
+  } catch (error) {
+    // Quota: a throw after partial processing must still settle the messages
+    // actually fetched, so handlers refund only the unprocessed remainder.
+    if (error instanceof Error) {
+      (error as Error & { partialFetched?: number }).partialFetched =
+        successfulMessageFetches;
+    }
+    throw error;
+  }
 }
 
 // ============================================================================
