@@ -1,7 +1,7 @@
 import type { CookieOptions } from "@supabase/ssr";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { PUBLIC_LEGAL_PATHS } from "@/lib/legal";
+import { isPublicPath } from "@/lib/legal";
 
 export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -14,8 +14,8 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_ENABLE_FAMILY_LINK === "true" &&
     request.nextUrl.pathname === "/join";
   const isApiRequest = request.nextUrl.pathname.startsWith("/api/");
-  const isLegalPage =
-    PUBLIC_LEGAL_PATHS.includes(request.nextUrl.pathname) ||
+  const isPublicRoute =
+    isPublicPath(request.nextUrl.pathname) ||
     request.nextUrl.pathname === "/api/billing/webhook" || // signed provider callback, verified in the route
     request.nextUrl.pathname === "/api/billing/cleanup"; // Vercel cron, requires the CRON_SECRET bearer in the route
 
@@ -25,7 +25,7 @@ export async function middleware(request: NextRequest) {
     supabaseUrl.includes("your-project") ||
     supabaseAnonKey.includes("your-anon-key")
   ) {
-    if (demoModeEnabled || isLoginPage || isAuthCallback || isApiRequest || isLegalPage) {
+    if (demoModeEnabled || isLoginPage || isAuthCallback || isApiRequest || isPublicRoute) {
       return NextResponse.next();
     }
 
@@ -61,7 +61,7 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user && !isLoginPage && !isAuthCallback && !isJoinPage && !isLegalPage) {
+  if (!user && !isLoginPage && !isAuthCallback && !isJoinPage && !isPublicRoute) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";

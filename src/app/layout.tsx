@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Link from "next/link";
 import "./globals.css";
 import { PendingJoinRedirect } from "@/components/PendingJoinRedirect";
 import { AppProvider } from "@/context/AppContext";
@@ -41,6 +42,15 @@ export default function RootLayout({
             <PendingJoinRedirect />
             {children}
           </main>
+          <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-24 lg:pb-10 text-xs text-slate-500 dark:text-slate-400">
+            <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
+              <Link href="/privacy" className="hover:text-slate-900 dark:hover:text-white">Privacy</Link>
+              <Link href="/terms" className="hover:text-slate-900 dark:hover:text-white">Terms</Link>
+              <Link href="/pricing" className="hover:text-slate-900 dark:hover:text-white">Pricing</Link>
+              <Link href="/refunds" className="hover:text-slate-900 dark:hover:text-white">Refunds</Link>
+              <Link href="/contact" className="hover:text-slate-900 dark:hover:text-white">Contact</Link>
+            </nav>
+          </footer>
         </AppProvider>
       </body>
     </html>

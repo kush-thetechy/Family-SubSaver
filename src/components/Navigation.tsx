@@ -125,6 +125,7 @@ export function Navigation() {
           </Link>
 
           {/* Desktop Navigation Links */}
+          {(authUser || isDemoMode) && (
           <nav className="hidden lg:flex items-center gap-1">
             {navLinks.map((link) => {
               const Icon = link.icon;
@@ -144,7 +145,7 @@ export function Navigation() {
                 </Link>
               );
             })}
-          </nav>
+          </nav>)}
 
           {/* Profile Switcher (Key feature to test visibility & privacy!) */}
           <div className="flex items-center gap-2 shrink-0">
@@ -215,6 +216,7 @@ export function Navigation() {
       </header>
 
       {/* Mobile Bottom Navigation Bar */}
+      {(authUser || isDemoMode) && (
       <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 backdrop-blur pb-safe">
         <nav className="flex items-stretch justify-between gap-0 px-1 py-1.5">
           {navLinks.map((link) => {
@@ -236,7 +238,7 @@ export function Navigation() {
             );
           })}
         </nav>
-      </div>
+      </div>)}
     </>
   );
 }

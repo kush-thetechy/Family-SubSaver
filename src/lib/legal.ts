@@ -26,3 +26,12 @@ export function getLegalConfig(env: Record<string, string | undefined> = process
 }
 
 export const PUBLIC_LEGAL_PATHS = ["/privacy", "/terms", "/pricing", "/refunds", "/contact"];
+
+/**
+ * Signed-out visitors may open the app homepage and the legal pages without login.
+ * Google OAuth app verification requires a homepage visible without login that links
+ * the privacy policy (support.google.com/cloud/answer/13807376).
+ */
+export function isPublicPath(pathname: string): boolean {
+  return pathname === "/" || PUBLIC_LEGAL_PATHS.includes(pathname);
+}
