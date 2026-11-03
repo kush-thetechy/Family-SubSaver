@@ -23,6 +23,10 @@ import {
 import { GmailHistoryRange, GmailScanCoverage, Subscription } from "@/types";
 import { computeImportKey } from "@/lib/connectors/import-key";
 import { assessFeeGate } from "@/lib/fee-gate";
+import { isComposioGmailProvider } from "@/lib/connectors/composio-gmail";
+import { resolveComposioScanAccess } from "@/lib/connectors/composio-scan-access";
+import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { revokeComposioAccess } from "@/lib/connectors/composio-revoke";
 import { handleBatchedScan } from "@/lib/connectors/batched-scan-handler";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -64,9 +68,11 @@ function hasTrustedOrigin(request: Request): boolean {
 }
 
 async function handleGet() {
+  // In Composio mode the linking provider is Composio, not Google OAuth credentials.
   const hasGoogleConfiguration = Boolean(
-    process.env.GOOGLE_CLIENT_ID &&
-      process.env.GOOGLE_CLIENT_SECRET &&
+    (isComposioGmailProvider()
+      ? process.env.COMPOSIO_API_KEY && process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID
+      : process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) &&
       isSessionEncryptionConfigured()
   );
   const session = getSessionFromRequestCookies();
@@ -213,6 +219,30 @@ async function handleDelete(request: Request) {
         revokeFailed = true;
       }
     }
+  }
+
+  // Composio access (if any) must be revoked too, whatever the current provider flag says.
+  let composioRevokeFailed = false;
+  if (process.env.COMPOSIO_API_KEY || process.env.GMAIL_PROVIDER === "composio") {
+    try {
+      const revoked = await revokeComposioAccess({ supabase: createSupabaseAdminClient(), userId });
+      composioRevokeFailed = !revoked.ok;
+    } catch {
+      composioRevokeFailed = true;
+    }
+  }
+  if (composioRevokeFailed) {
+    const failed = gmailJson(
+      {
+        success: false,
+        connected: false,
+        error:
+          "Gmail could not be fully disconnected: the connection through our Gmail provider is still active. Please try again.",
+      },
+      { status: 502, headers: { "Cache-Control": "no-store" } }
+    );
+    clearSessionCookie(failed);
+    return failed;
   }
 
   const response = gmailJson(
@@ -381,7 +411,26 @@ async function handlePost(request: Request) {
   let accessToken = session.googleAccessToken;
   const tokenExpiry = session.tokenExpiry || 0;
 
-  if (!accessToken || Date.now() > tokenExpiry - 60000) {
+  if (isComposioGmailProvider()) {
+    // Composio mode (flag GMAIL_PROVIDER=composio): no Google token in our session; the
+    // scan token is derived only after the server-side binding checks pass.
+    let access;
+    try {
+      access = await resolveComposioScanAccess({
+        supabase: createSupabaseAdminClient(),
+        userId,
+      });
+    } catch {
+      access = { ok: false as const, status: 503, error: "Composio Gmail is not configured." };
+    }
+    if (!access.ok) {
+      return gmailJson(
+        { success: false, error: access.error },
+        { status: access.status, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    accessToken = access.scanToken;
+  } else if (!accessToken || Date.now() > tokenExpiry - 60000) {
     const response = gmailJson(
       {
         success: false,

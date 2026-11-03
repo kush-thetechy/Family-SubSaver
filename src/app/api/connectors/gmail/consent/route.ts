@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { revokeComposioAccess } from "@/lib/connectors/composio-revoke";
 import { gmailJson } from "@/lib/connectors/gmail-response";
 import { GMAIL_CONSENT_VERSION } from "@/lib/connectors/gmail-policy";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -54,6 +56,17 @@ export async function DELETE(request: Request) {
     return gmailJson({ error: "Sign in before changing Gmail consent." }, { status: 401 });
   }
 
+  // Withdrawal always proceeds, but any Composio access is revoked too and failure is disclosed.
+  let composioRevokeFailed = false;
+  if (process.env.COMPOSIO_API_KEY || process.env.GMAIL_PROVIDER === "composio") {
+    try {
+      const revoked = await revokeComposioAccess({ supabase: createSupabaseAdminClient(), userId: user.id });
+      composioRevokeFailed = !revoked.ok;
+    } catch {
+      composioRevokeFailed = true;
+    }
+  }
+
   const { error } = await supabase.rpc("withdraw_own_gmail_consent", {
     consent_version: GMAIL_CONSENT_VERSION,
   });
@@ -62,5 +75,15 @@ export async function DELETE(request: Request) {
     return gmailJson({ error: "Could not withdraw Gmail consent." }, { status: 503 });
   }
 
-  return gmailJson({ success: true }, { headers: { "Cache-Control": "no-store" } });
+  return gmailJson(
+    composioRevokeFailed
+      ? {
+          success: true,
+          composioRevocationFailed: true,
+          warning:
+            "Consent was withdrawn and scanning is blocked, but the connection through our Gmail provider could not be confirmed removed. Use Disconnect Gmail to retry.",
+        }
+      : { success: true },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
