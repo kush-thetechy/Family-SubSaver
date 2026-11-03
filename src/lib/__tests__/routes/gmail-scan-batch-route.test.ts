@@ -104,7 +104,7 @@ beforeEach(() => {
 
 describe("batched gmail scan route", () => {
   it("checks quota per batch, records processed emails per batch and returns sanitized evidence", async () => {
-    const r1 = await call({ mode: "live", batch: true, historyRange: "13m" });
+    const r1 = await call({ mode: "live", batch: true, historyRange: "45d" });
     const j1 = await r1.json();
     expect(r1.status).toBe(200);
     expect(j1.done).toBe(false);
@@ -119,7 +119,7 @@ describe("batched gmail scan route", () => {
     expect(j1.cursor).not.toContain("RAWMSGID123");
 
     st.done = true;
-    const r2 = await call({ mode: "live", batch: true, historyRange: "13m", cursor: j1.cursor });
+    const r2 = await call({ mode: "live", batch: true, historyRange: "45d", cursor: j1.cursor });
     expect(r2.status).toBe(200);
     expect(st.quotaCalls).toBe(2);
     expect(st.recordCalls).toBe(2);
@@ -129,7 +129,7 @@ describe("batched gmail scan route", () => {
 
   it("fully refunds the reservation when a batch processed no emails (cancelled before fetch)", async () => {
     st.fetchedDelta = 0;
-    const r1 = await call({ mode: "live", batch: true, historyRange: "13m" });
+    const r1 = await call({ mode: "live", batch: true, historyRange: "45d" });
     expect(r1.status).toBe(200);
     expect(st.quotaCalls).toBe(1);
     expect(st.recordCalls).toBe(1);
@@ -138,26 +138,32 @@ describe("batched gmail scan route", () => {
 
   it("settles only the unprocessed remainder when a batch fails after partial work", async () => {
     st.throwWithPartial = 50;
-    await call({ mode: "live", batch: true, historyRange: "13m" }).catch(() => {});
+    await call({ mode: "live", batch: true, historyRange: "45d" }).catch(() => {});
     expect(st.recordedCounts).toEqual([-1950]);
   });
 
   it("stops at the next batch when consent is withdrawn or the gate closes", async () => {
-    const j1 = await (await call({ mode: "live", batch: true, historyRange: "13m" })).json();
+    const j1 = await (await call({ mode: "live", batch: true, historyRange: "45d" })).json();
     st.consent = false;
-    expect((await call({ mode: "live", batch: true, historyRange: "13m", cursor: j1.cursor })).status).toBe(403);
+    expect((await call({ mode: "live", batch: true, historyRange: "45d", cursor: j1.cursor })).status).toBe(403);
     st.consent = true;
     st.enabled = false;
-    expect((await call({ mode: "live", batch: true, historyRange: "13m", cursor: j1.cursor })).status).toBe(403);
+    expect((await call({ mode: "live", batch: true, historyRange: "45d", cursor: j1.cursor })).status).toBe(403);
   });
 
   it("rejects invalid, tampered or wrong-range cursors with 400", async () => {
-    const j1 = await (await call({ mode: "live", batch: true, historyRange: "13m" })).json();
-    expect((await call({ mode: "live", batch: true, historyRange: "13m", cursor: "garbage" })).status).toBe(400);
+    const j1 = await (await call({ mode: "live", batch: true, historyRange: "45d" })).json();
+    expect((await call({ mode: "live", batch: true, historyRange: "45d", cursor: "garbage" })).status).toBe(400);
     expect((await call({ mode: "live", batch: true, historyRange: "30d", cursor: j1.cursor })).status).toBe(400);
-    expect((await call({ mode: "live", batch: true, historyRange: "13m", cursor: j1.cursor.slice(0, -4) + "AAAA" })).status).toBe(400);
+    expect((await call({ mode: "live", batch: true, historyRange: "45d", cursor: j1.cursor.slice(0, -4) + "AAAA" })).status).toBe(400);
     expect(st.quotaCalls).toBe(1);
     expect(st.recordCalls).toBe(1);
+  });
+
+  it("only scans the past 45 days: longer or shorter windows are refused before any quota use", async () => {
+    expect((await call({ mode: "live", batch: true, historyRange: "13m" })).status).toBe(400);
+    expect((await call({ mode: "live", batch: true, historyRange: "30d" })).status).toBe(400);
+    expect(st.quotaCalls).toBe(0);
   });
 });
 

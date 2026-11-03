@@ -125,8 +125,7 @@ function ImportContent() {
   const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
   const [modalConsent, setModalConsent] = useState(false);
   const [gmailMessage, setGmailMessage] = useState("");
-  const [selectedHistoryRange, setSelectedHistoryRange] =
-    useState<GmailHistoryRange>("13m");
+  const selectedHistoryRange: GmailHistoryRange = "45d";
   const [gmailCoverage, setGmailCoverage] =
     useState<GmailScanCoverage | null>(null);
   const [gmailCoverageHistoryAvailable, setGmailCoverageHistoryAvailable] =
@@ -372,7 +371,7 @@ function ImportContent() {
         setIsGmailModalOpen(false);
         setModalConsent(false);
         setGmailMessage(
-          "Updated 13-month Gmail consent saved. Your existing Gmail connection is ready to scan; Google authorization was not repeated."
+          "Gmail consent saved. Your existing Gmail connection is ready to scan; Google authorization was not repeated."
         );
         return;
       }
@@ -1130,7 +1129,7 @@ function ImportContent() {
                 Connect Gmail for the broadest subscription scan
               </h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-                We search matching subscription, renewal, receipt, payment, membership, and mandate emails within a selected window of up to 13 months. This can find services billed directly to a card as well as store receipts; scan coverage is shown for review.
+                We search your last 45 days of subscription, renewal, receipt, payment, membership, and mandate emails. This finds services billed directly to a card as well as Google Play and Apple receipts; you review everything before it is saved.
               </p>
             </div>
             <button
@@ -1191,7 +1190,7 @@ function ImportContent() {
             </div>
           ) : null}
           {/* Main Visual Dropzone (Screenshot OCR) */}
-          <div className="bg-white dark:bg-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8 text-center transition hover:border-indigo-400 dark:hover:border-indigo-600 shadow-sm relative overflow-hidden group">
+          <div id="screenshots" className="scroll-mt-24 bg-white dark:bg-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8 text-center transition hover:border-indigo-400 dark:hover:border-indigo-600 shadow-sm relative overflow-hidden group">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-sm group-hover:scale-105 transition-transform duration-200">
               <FileUp className="w-7 h-7" />
             </div>
@@ -1266,7 +1265,7 @@ function ImportContent() {
                   Gmail Subscription Scan
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  A scan you start searches five subscription-related lanes, matching emails from the selected window of up to 13 months, read in batches, each email counted once. A run reads up to 2,000 emails and a whole scan up to 10,000. If a limit is reached the scan tells you coverage is partial and, for the per-run limit, lets you continue; you can stop at any time. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
+                  A scan you start searches five subscription-related lanes, matching emails from the past 45 days, read in batches, each email counted once. A run reads up to 2,000 emails and a whole scan up to 10,000. If a limit is reached the scan tells you coverage is partial and, for the per-run limit, lets you continue; you can stop at any time. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
                 </p>
               </div>
 
@@ -1283,27 +1282,6 @@ function ImportContent() {
                       "Live Gmail linking needs server settings. You can preview sample results without connecting an inbox."}
                   </p>
                 )}
-                {gmailConnected && (
-                  <div className="space-y-1.5 pb-1">
-                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                      Search timeframe (maximum 13 months):
-                    </label>
-                    <select
-                      value={selectedHistoryRange}
-                      onChange={(e) =>
-                        setSelectedHistoryRange(
-                          e.target.value as GmailHistoryRange
-                        )
-                      }
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200"
-                    >
-                      <option value="30d">Past 30 days</option>
-                      <option value="45d">Past 45 days</option>
-                      <option value="13m">Past 13 months</option>
-                    </select>
-                  </div>
-                )}
-
                 <button
                   type="button"
                   onClick={
@@ -2278,7 +2256,7 @@ function ImportContent() {
                   Connect Gmail for Subscription Discovery
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Read-only keyword search, limited by the app to a maximum of 13 months
+                  Read-only keyword search of the past 45 days
                 </p>
               </div>
             </div>
@@ -2291,7 +2269,7 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches up to 13 months across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run and 10,000 per scan, then stops and says coverage is partial. Results are never described as the whole inbox. A match may contain unrelated text.
+                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches the past 45 days across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run and 10,000 per scan, then stops and says coverage is partial. Results are never described as the whole inbox. A match may contain unrelated text.
                 </li>
                 <li>
                   <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; aggregate scan coverage is saved to your account and retained until you delete your account. Withdrawing consent stops future scans but does not delete prior coverage. This does not mean message data never leaves your device or that Google limits the scope to recent messages.
@@ -2314,7 +2292,7 @@ function ImportContent() {
                 className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
               />
               <span>
-                I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above, including the 13-month search window and aggregate coverage recording.
+                I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above, including the 45-day search window and aggregate coverage recording.
               </span>
             </label>
 

@@ -16,7 +16,61 @@ import {
   ShieldCheck,
   PlusCircle,
   FileUp,
+  Mail,
+  Users,
 } from "lucide-react";
+
+function FirstRun({ name }: { name: string }) {
+  const firstName = name.split(" ")[0];
+  return (
+    <div className="mx-auto max-w-xl space-y-6 py-4 sm:py-10">
+      <div className="text-center">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+          Hi {firstName}, let&apos;s find your subscriptions
+        </h1>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          Scan your Gmail and see every subscription you pay for, and what it costs each month, in about a minute.
+        </p>
+      </div>
+
+      <div className="rounded-3xl border border-indigo-200 bg-white p-6 text-center shadow-sm dark:border-indigo-900/70 dark:bg-slate-900">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
+          <Mail className="h-7 w-7" />
+        </div>
+        <h2 className="mt-4 text-lg font-bold text-slate-900 dark:text-white">Scan your Gmail</h2>
+        <ul className="mx-auto mt-3 max-w-sm space-y-1.5 text-left text-xs text-slate-600 dark:text-slate-300">
+          <li>• Read-only: we can&apos;t send, change or delete email</li>
+          <li>• Only receipts, renewals and payment alerts from the past 45 days</li>
+          <li>• You review every result before anything is saved</li>
+        </ul>
+        <Link
+          href="/import"
+          className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700"
+        >
+          Scan Gmail
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+      </div>
+
+      <div className="flex flex-col items-center gap-2 text-xs text-slate-500 dark:text-slate-400 sm:flex-row sm:justify-center sm:gap-4">
+        <Link href="/import#screenshots" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
+          Upload app-store screenshots instead
+        </Link>
+        <span className="hidden sm:inline">·</span>
+        <Link href="/subscriptions?action=add" className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
+          Add one manually
+        </Link>
+      </div>
+
+      <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300">
+        <Users className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+        <p>
+          After your scan, you can invite family members to scan their own Gmail. You&apos;ll see the whole family&apos;s subscriptions in one place, and each person decides what they share.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 // Whole calendar days from `now` (local date) to a YYYY-MM-DD renewal date.
 function daysUntil(renewal: string, now: Date): number {
@@ -36,7 +90,13 @@ export function DashboardHome() {
     auditProgress,
     members,
     isDemoMode,
+    isLoaded,
   } = useApp();
+
+  // A brand-new account sees one clear next step, not an empty dashboard.
+  if (!isDemoMode && isLoaded && subscriptions.length === 0) {
+    return <FirstRun name={currentProfile.name} />;
+  }
 
   // Find upcoming renewals in next 30 days
   // Demo data is anchored to a fixed reference date; real accounts use today.

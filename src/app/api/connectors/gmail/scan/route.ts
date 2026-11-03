@@ -10,7 +10,6 @@ import {
 import {
   GmailApiError,
   MAX_GMAIL_MESSAGES_PER_SCAN,
-  MAX_GMAIL_SCAN_MESSAGES_PER_DAY,
   getGmailHistoryRangeLabel,
   getSampleConsolidatedCandidates,
   normalizeGmailHistoryRange,
@@ -286,14 +285,12 @@ async function handlePost(request: Request) {
       { status: 400 }
     );
   }
-  if (
-    body.historyRange !== undefined &&
-    body.historyRange !== "30d" &&
-    body.historyRange !== "45d" &&
-    body.historyRange !== "13m"
-  ) {
+  // Every scan covers the past 45 days (owner decision, 3 Nov 2026): long enough for monthly
+  // renewals and recent activations, short enough to stay fast. The engine still understands
+  // "30d"/"13m" so older coverage rows read correctly, but the app no longer offers them.
+  if (body.historyRange !== undefined && body.historyRange !== "45d") {
     return gmailJson(
-      { success: false, error: "Choose a 30-day, 45-day, or 13-month Gmail history window." },
+      { success: false, error: "Gmail scans cover the past 45 days." },
       { status: 400, headers: { "Cache-Control": "no-store" } }
     );
   }
@@ -440,7 +437,7 @@ async function handlePost(request: Request) {
       return gmailJson(
         {
           success: false,
-          error: `Daily Gmail email-processing limit reached (${MAX_GMAIL_SCAN_MESSAGES_PER_DAY.toLocaleString("en-US")} emails). Try again after ${quota.resets_at}.`,
+          error: "You have scanned a lot of email today. Please try again tomorrow.",
           messagesRemaining: quota.messages_remaining,
           resetsAt: quota.resets_at,
         },
