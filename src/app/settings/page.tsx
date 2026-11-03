@@ -245,44 +245,6 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            {!isDemoMode && (
-              <div className="rounded-xl border border-rose-300 bg-rose-50 p-4 dark:border-rose-900 dark:bg-rose-950/30">
-                <h3 className="font-bold text-sm text-rose-900 dark:text-rose-200">
-                  Permanently delete account
-                </h3>
-                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                  This deletes your Supabase account, household records, subscription data, and Gmail consent history. Disconnect/revocation is attempted first; Google may still require you to remove access in your Google Account if revocation fails.
-                </p>
-                <label className="mt-3 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                  Confirm with your account password
-                  <input
-                    type="password"
-                    autoComplete="current-password"
-                    value={accountPassword}
-                    onChange={(event) => setAccountPassword(event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={handleDeleteAccount}
-                  disabled={isDeletingAccount}
-                  className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white hover:bg-rose-800 disabled:opacity-60"
-                >
-                  {isDeletingAccount ? "Deleting account..." : "Delete account and data"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleWithdrawGmailConsent}
-                  className="ml-2 mt-3 rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                >
-                  Withdraw Gmail consent
-                </button>
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  Withdrawing consent only stops new scans. It does not revoke Google access (Disconnect Gmail does that) and does not delete imported records (Delete Gmail-imported records does that).
-                </p>
-              </div>
-            )}
             <div className="pt-4">
               <button
                 onClick={handleExport}
@@ -320,6 +282,45 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+
+            {!isDemoMode && (
+              <div className="rounded-xl border border-rose-300 bg-rose-50 p-4 dark:border-rose-900 dark:bg-rose-950/30 sm:col-span-2">
+                <h3 className="font-bold text-sm text-rose-900 dark:text-rose-200">
+                  Permanently delete account
+                </h3>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                  This deletes your Supabase account, household records, subscription data, and Gmail consent history. Disconnect/revocation is attempted first; Google may still require you to remove access in your Google Account if revocation fails.
+                </p>
+                <label className="mt-3 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Confirm with your account password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={accountPassword}
+                    onChange={(event) => setAccountPassword(event.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  disabled={isDeletingAccount}
+                  className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white hover:bg-rose-800 disabled:opacity-60"
+                >
+                  {isDeletingAccount ? "Deleting account..." : "Delete account and data"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWithdrawGmailConsent}
+                  className="ml-2 mt-3 rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Withdraw Gmail consent
+                </button>
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Withdrawing consent only stops new scans. It does not revoke Google access (Disconnect Gmail does that) and does not delete imported records (Delete Gmail-imported records does that).
+                </p>
+              </div>
+            )}
         </div>
       </div>
 
