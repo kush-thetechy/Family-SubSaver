@@ -4,6 +4,9 @@ const st = {
   consent: true,
   enabled: true,
   quotaCalls: 0,
+  recordCalls: 0,
+  recordedCounts: [] as number[],
+  runFetched: 40,
   coverageCalls: 0,
   done: false,
 };
@@ -12,10 +15,15 @@ vi.mock("@/lib/supabase", () => ({ isSupabaseConfigured: true }));
 vi.mock("@/lib/supabase-server", () => ({
   createSupabaseServerClient: () => ({
     auth: { getUser: async () => ({ data: { user: { id: "u1" } }, error: null }) },
-    rpc: async (name: string) => {
-      if (name === "consume_gmail_scan_quota") {
+    rpc: async (name: string, args?: unknown) => {
+      if (name === "check_gmail_message_quota") {
         st.quotaCalls += 1;
-        return { data: [{ allowed: true, scans_remaining: 4, resets_at: "x" }], error: null };
+        return { data: [{ allowed: true, messages_remaining: 1999, resets_at: "x" }], error: null };
+      }
+      if (name === "record_gmail_messages_processed") {
+        st.recordCalls += 1;
+        st.recordedCounts.push((args as { p_count: number }).p_count);
+        return { data: [{ messages_used: 1, messages_remaining: 1999, resets_at: "x" }], error: null };
       }
       st.coverageCalls += 1;
       return { data: "cov-1", error: null };
@@ -49,7 +57,7 @@ vi.mock("@/lib/connectors/gmail-batch", async () => {
   return {
     ...actual,
     runGmailBatch: async (_t: string, state: any) => ({
-      state: { ...state, attempted: 40, selected: 40, fetched: 40, pending: [] },
+      state: { ...state, attempted: 40, selected: 40, fetched: 40, runFetched: st.runFetched, pending: [] },
       evidence: [
         { id: "raw-id", message_id: "RAWMSGID123", source: "gmail", evidence_type: "receipt", date: "2026-01-01", sender: "a@b.com", subject: "secret subject", summary: "s" },
       ],
@@ -78,17 +86,22 @@ beforeEach(() => {
   st.consent = true;
   st.enabled = true;
   st.quotaCalls = 0;
+  st.recordCalls = 0;
+  st.recordedCounts = [];
+  st.runFetched = 40;
   st.coverageCalls = 0;
   st.done = false;
 });
 
 describe("batched gmail scan route", () => {
-  it("consumes quota only on the first batch and returns sanitized evidence", async () => {
+  it("checks quota per batch, records processed emails per batch and returns sanitized evidence", async () => {
     const r1 = await call({ mode: "live", batch: true, historyRange: "13m" });
     const j1 = await r1.json();
     expect(r1.status).toBe(200);
     expect(j1.done).toBe(false);
     expect(st.quotaCalls).toBe(1);
+    expect(st.recordCalls).toBe(1);
+    expect(st.recordedCounts).toEqual([40]);
     const text = JSON.stringify(j1);
     expect(text).not.toContain("RAWMSGID123");
     expect(text).not.toContain("a@b.com");
@@ -99,8 +112,18 @@ describe("batched gmail scan route", () => {
     st.done = true;
     const r2 = await call({ mode: "live", batch: true, historyRange: "13m", cursor: j1.cursor });
     expect(r2.status).toBe(200);
-    expect(st.quotaCalls).toBe(1);
+    expect(st.quotaCalls).toBe(2);
+    expect(st.recordCalls).toBe(2);
+    expect(st.recordedCounts).toEqual([40, 40]);
     expect(st.coverageCalls).toBe(1);
+  });
+
+  it("records no usage when a batch processed no emails (cancelled before fetch)", async () => {
+    st.runFetched = 0;
+    const r1 = await call({ mode: "live", batch: true, historyRange: "13m" });
+    expect(r1.status).toBe(200);
+    expect(st.quotaCalls).toBe(1);
+    expect(st.recordCalls).toBe(0);
   });
 
   it("stops at the next batch when consent is withdrawn or the gate closes", async () => {
@@ -118,6 +141,7 @@ describe("batched gmail scan route", () => {
     expect((await call({ mode: "live", batch: true, historyRange: "30d", cursor: j1.cursor })).status).toBe(400);
     expect((await call({ mode: "live", batch: true, historyRange: "13m", cursor: j1.cursor.slice(0, -4) + "AAAA" })).status).toBe(400);
     expect(st.quotaCalls).toBe(1);
+    expect(st.recordCalls).toBe(1);
   });
 });
 

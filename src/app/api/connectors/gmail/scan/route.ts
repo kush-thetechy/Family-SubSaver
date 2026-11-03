@@ -9,7 +9,7 @@ import {
 } from "@/lib/connectors/server-token-store";
 import {
   GmailApiError,
-  MAX_GMAIL_SCANS_PER_DAY,
+  MAX_GMAIL_SCAN_MESSAGES_PER_DAY,
   getGmailHistoryRangeLabel,
   getSampleConsolidatedCandidates,
   normalizeGmailHistoryRange,
@@ -38,9 +38,9 @@ interface ScanRequestBody {
   resume?: boolean;
 }
 
-interface GmailScanQuota {
+interface GmailMessageQuota {
   allowed: boolean;
-  scans_remaining: number;
+  messages_remaining: number;
   resets_at: string;
 }
 
@@ -410,7 +410,7 @@ async function handlePost(request: Request) {
   // Execute live multi-lane search
   try {
     const { data: quotaRows, error: quotaError } = await supabase.rpc(
-      "consume_gmail_scan_quota"
+      "check_gmail_message_quota"
     );
     if (quotaError) {
       console.error("Could not enforce Gmail scan quota:");
@@ -423,7 +423,7 @@ async function handlePost(request: Request) {
       );
     }
 
-    const quota = (quotaRows as GmailScanQuota[] | null)?.[0];
+    const quota = (quotaRows as GmailMessageQuota[] | null)?.[0];
     if (!quota) {
       console.error("Gmail scan quota function returned no result.");
       return gmailJson(
@@ -438,8 +438,8 @@ async function handlePost(request: Request) {
       return gmailJson(
         {
           success: false,
-          error: `Daily Gmail scan limit reached (${MAX_GMAIL_SCANS_PER_DAY} scans). Try again after ${quota.resets_at}.`,
-          scansRemaining: quota.scans_remaining,
+          error: `Daily Gmail email-processing limit reached (${MAX_GMAIL_SCAN_MESSAGES_PER_DAY.toLocaleString("en-US")} emails). Try again after ${quota.resets_at}.`,
+          messagesRemaining: quota.messages_remaining,
           resetsAt: quota.resets_at,
         },
         { status: 429 }
@@ -460,6 +460,15 @@ async function handlePost(request: Request) {
       coverage,
       fatalErrorStatus,
     } = scanResult;
+    if (totalMessagesScanned > 0) {
+      const { error: usageError } = await supabase.rpc(
+        "record_gmail_messages_processed",
+        { p_count: totalMessagesScanned }
+      );
+      if (usageError) {
+        console.error("Could not record Gmail message usage.");
+      }
+    }
     const coverageWarnings = [...warnings];
     const { data: coverageId, error: coverageError } = await supabase.rpc(
       "record_own_gmail_scan_coverage",

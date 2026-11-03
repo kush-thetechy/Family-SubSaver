@@ -10,7 +10,7 @@ import {
 } from "./gmail-batch";
 import { openScanCursor, sealScanCursor } from "./scan-cursor";
 import { evidenceKey, evidenceProof } from "./import-key";
-import { getGmailHistoryWindow, MAX_GMAIL_SCANS_PER_DAY } from "./gmail-service";
+import { getGmailHistoryWindow, MAX_GMAIL_SCAN_MESSAGES_PER_DAY } from "./gmail-service";
 import { clearSessionCookie, setSessionCookie, ServerUserSession } from "./server-token-store";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -77,24 +77,6 @@ interface Args {
 export async function handleBatchedScan(a: Args): Promise<NextResponse> {
   let state: GmailBatchState;
   if (a.cursor === undefined || a.cursor === null) {
-    const { data, error } = await a.supabase.rpc("consume_gmail_scan_quota");
-    const quota = (data as { allowed: boolean; resets_at?: string; scans_remaining?: number }[] | null)?.[0];
-    if (error || !quota) {
-      return gmailJson(
-        { success: false, error: "Gmail scan limits could not be verified. Please try again later." },
-        { status: 503, headers: NO_STORE }
-      );
-    }
-    if (!quota.allowed) {
-      return gmailJson(
-        {
-          success: false,
-          error: `Daily Gmail scan limit reached (${MAX_GMAIL_SCANS_PER_DAY} scans). Try again after ${quota.resets_at}.`,
-          resetsAt: quota.resets_at,
-        },
-        { status: 429, headers: NO_STORE }
-      );
-    }
     state = newGmailBatchState(a.historyRange);
   } else {
     const opened = openScanCursor(a.userId, a.cursor);
@@ -108,7 +90,39 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
     if (a.resume) state = resumeGmailBatchState(state);
   }
 
+  // Non-consuming pre-flight check: quota is by emails actually processed,
+  // recorded below per batch, so cancelled scans cost nothing.
+  {
+    const { data, error } = await a.supabase.rpc("check_gmail_message_quota");
+    const quota = (data as { allowed: boolean; resets_at?: string; messages_remaining?: number }[] | null)?.[0];
+    if (error || !quota) {
+      return gmailJson(
+        { success: false, error: "Gmail scan limits could not be verified. Please try again later." },
+        { status: 503, headers: NO_STORE }
+      );
+    }
+    if (!quota.allowed) {
+      return gmailJson(
+        {
+          success: false,
+          error: `Daily Gmail email-processing limit reached (${MAX_GMAIL_SCAN_MESSAGES_PER_DAY.toLocaleString("en-US")} emails). Try again after ${quota.resets_at}.`,
+          resetsAt: quota.resets_at,
+        },
+        { status: 429, headers: NO_STORE }
+      );
+    }
+  }
+
   const result = await runGmailBatch(a.accessToken, state);
+  if (result.state.runFetched > 0) {
+    const { error: usageError } = await a.supabase.rpc(
+      "record_gmail_messages_processed",
+      { p_count: result.state.runFetched }
+    );
+    if (usageError) {
+      console.error("Could not record Gmail message usage.");
+    }
+  }
   const warnings: string[] = [];
   const s = result.state;
 

@@ -10,7 +10,7 @@ import {
 } from "@/types";
 import { rupeesToPaise } from "../calculations";
 
-export const MAX_GMAIL_SCANS_PER_DAY = 5;
+export const MAX_GMAIL_SCAN_MESSAGES_PER_DAY = 2000;
 
 export interface GmailHeader {
   name: string;
