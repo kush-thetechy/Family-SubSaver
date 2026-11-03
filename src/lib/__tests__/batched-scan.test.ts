@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  GMAIL_PAGE_SIZE,
   GMAIL_RUN_MESSAGE_CEILING,
   GMAIL_TOTAL_MESSAGE_CEILING,
   newGmailBatchState,
@@ -93,6 +94,16 @@ async function runAll(state: GmailBatchState, budgetMs = 20_000) {
 
 beforeEach(() => setGmailRetryDelaysForTests([0, 0, 0]));
 afterEach(() => vi.unstubAllGlobals());
+
+describe("scan capability constants (user-required deep-scan ceilings)", () => {
+  it("keeps the single-shot page and message caps", () => {
+    expect(GMAIL_PAGE_SIZE).toBe(100);
+  });
+  it("keeps the deep-scan ceilings: 2000 per run, 10000 per scan", () => {
+    expect(GMAIL_RUN_MESSAGE_CEILING).toBe(2000);
+    expect(GMAIL_TOTAL_MESSAGE_CEILING).toBe(10000);
+  });
+});
 
 describe("resumable batched scan", () => {
   it("scans well past the old 200 cap and reaches every lane", async () => {

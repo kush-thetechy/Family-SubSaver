@@ -18,6 +18,7 @@
 export const COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3.1";
 export const COMPOSIO_GMAIL_FETCH_EMAILS = "GMAIL_FETCH_EMAILS";
 export const COMPOSIO_GMAIL_FETCH_MESSAGE = "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID";
+export const COMPOSIO_GMAIL_GET_PROFILE = "GMAIL_GET_PROFILE";
 
 export function isComposioGmailProvider(
   env: Record<string, string | undefined> = process.env
@@ -35,12 +36,20 @@ interface ComposioExecuteEnvelope {
   error?: string | null;
 }
 
-async function executeComposioTool<T>(
+export interface ComposioExecuteOptions {
+  /** Pin execution to one exact connected account (never "any active account"). */
+  connectedAccountId?: string;
+  /** Override the env API key (used by server-side binding validation). */
+  apiKey?: string;
+}
+
+export async function executeComposioTool<T>(
   toolSlug: string,
   userId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  options: ComposioExecuteOptions = {}
 ): Promise<T> {
-  const apiKey = process.env.COMPOSIO_API_KEY as string;
+  const apiKey = options.apiKey ?? (process.env.COMPOSIO_API_KEY as string);
   const response = await fetch(
     `${COMPOSIO_API_BASE}/tools/execute/${encodeURIComponent(toolSlug)}`,
     {
@@ -49,7 +58,13 @@ async function executeComposioTool<T>(
         "x-api-key": apiKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ user_id: userId, arguments: args }),
+      body: JSON.stringify({
+        user_id: userId,
+        arguments: args,
+        ...(options.connectedAccountId
+          ? { connected_account_id: options.connectedAccountId }
+          : {}),
+      }),
       cache: "no-store",
     }
   );
