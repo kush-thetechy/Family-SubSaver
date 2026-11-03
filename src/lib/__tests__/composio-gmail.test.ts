@@ -75,7 +75,7 @@ describe("composioGmailRequest", () => {
     vi.stubGlobal("fetch", fetchMock);
     const out = await composioGmailRequest<{ messages: { id: string }[]; nextPageToken?: string }>(
       "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=receipt&maxResults=100&pageToken=tok1",
-      "user-1"
+      "composio:user-1:ca_1"
     );
     expect(out).toEqual({ messages: [{ id: "m1" }, { id: "m2" }], nextPageToken: "tok2" });
     const [calledUrl, init] = fetchMock.mock.calls[0];
@@ -111,26 +111,26 @@ describe("composioGmailRequest", () => {
     vi.stubGlobal("fetch", fetchMock);
     const msg = await composioGmailRequest<GmailMessage>(
       "https://gmail.googleapis.com/gmail/v1/users/me/messages/zz9?format=full",
-      "user-1"
+      "composio:user-1:ca_1"
     );
     expect(msg.id).toBe("zz9");
     expect(getHeader(msg.payload?.headers, "Subject")).toContain("Apple");
     const body = getBodyText(msg.payload!).join("\n");
     expect(body).toContain("Rs 99.00");
     const body0 = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body0.arguments).toEqual({ message_id: "zz9" });
+    expect(body0.arguments).toEqual({ message_id: "zz9", format: "full" });
   });
 
   it("maps HTTP failures to GmailApiError with the status", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 401 })));
     await expect(
-      composioGmailRequest("https://gmail.googleapis.com/gmail/v1/users/me/messages?q=x", "user-1")
+      composioGmailRequest("https://gmail.googleapis.com/gmail/v1/users/me/messages?q=x", "composio:user-1:ca_1")
     ).rejects.toMatchObject({ status: 401 });
   });
 
   it("rejects unsupported Gmail paths", async () => {
     await expect(
-      composioGmailRequest("https://gmail.googleapis.com/gmail/v1/users/me/labels", "user-1")
+      composioGmailRequest("https://gmail.googleapis.com/gmail/v1/users/me/labels", "composio:user-1:ca_1")
     ).rejects.toThrow(/Unsupported Gmail path/);
   });
 });

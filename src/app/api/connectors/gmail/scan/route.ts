@@ -24,6 +24,8 @@ import {
 import { GmailHistoryRange, GmailScanCoverage, Subscription } from "@/types";
 import { computeImportKey } from "@/lib/connectors/import-key";
 import { assessFeeGate } from "@/lib/fee-gate";
+import { isComposioGmailProvider } from "@/lib/connectors/composio-gmail";
+import { resolveComposioScanAccess } from "@/lib/connectors/composio-scan-access";
 import { handleBatchedScan } from "@/lib/connectors/batched-scan-handler";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -384,7 +386,21 @@ async function handlePost(request: Request) {
   let accessToken = session.googleAccessToken;
   const tokenExpiry = session.tokenExpiry || 0;
 
-  if (!accessToken || Date.now() > tokenExpiry - 60000) {
+  if (isComposioGmailProvider()) {
+    // Composio mode (flag GMAIL_PROVIDER=composio): no Google token in our session; the
+    // scan token is derived only after the server-side binding checks pass.
+    const access = await resolveComposioScanAccess({
+      supabase,
+      userId,
+    });
+    if (!access.ok) {
+      return gmailJson(
+        { success: false, error: access.error },
+        { status: access.status, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    accessToken = access.scanToken;
+  } else if (!accessToken || Date.now() > tokenExpiry - 60000) {
     const response = gmailJson(
       {
         success: false,
