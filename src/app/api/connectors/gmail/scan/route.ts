@@ -69,9 +69,11 @@ function hasTrustedOrigin(request: Request): boolean {
 }
 
 async function handleGet() {
+  // In Composio mode the linking provider is Composio, not Google OAuth credentials.
   const hasGoogleConfiguration = Boolean(
-    process.env.GOOGLE_CLIENT_ID &&
-      process.env.GOOGLE_CLIENT_SECRET &&
+    (isComposioGmailProvider()
+      ? process.env.COMPOSIO_API_KEY && process.env.COMPOSIO_GMAIL_AUTH_CONFIG_ID
+      : process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) &&
       isSessionEncryptionConfigured()
   );
   const session = getSessionFromRequestCookies();
