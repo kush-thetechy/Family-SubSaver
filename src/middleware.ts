@@ -88,6 +88,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.json|google6d9b01e9061e6473.html|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // robots.txt and sitemap.xml must reach crawlers directly; without this
+    // exclusion the auth redirect answers Google with the /login HTML page.
+    "/((?!_next/static|_next/image|favicon.ico|manifest.json|robots.txt|sitemap.xml|google6d9b01e9061e6473.html|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

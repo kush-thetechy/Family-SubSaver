@@ -1,7 +1,10 @@
 import { LegalPage } from "@/components/LegalPage";
 import PaySection from "@/components/PaySection";
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Pricing - Family SubSaver" };
+export const metadata = {
+  title: "Pricing - Family SubSaver",
+  alternates: { canonical: "/pricing" },
+};
 export default function Page() {
   return (
     <LegalPage title="Pricing">

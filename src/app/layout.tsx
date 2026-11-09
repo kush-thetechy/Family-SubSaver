@@ -2,11 +2,16 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
 import { PendingJoinRedirect } from "@/components/PendingJoinRedirect";
+import { SITE_ORIGIN } from "@/lib/seo";
 import { AppProvider } from "@/context/AppContext";
 import { AuthStatusNotice } from "@/components/AuthStatusNotice";
 import { Navigation } from "@/components/Navigation";
 
 export const metadata: Metadata = {
+  // Absolute base so relative canonicals resolve onto the production www host.
+  // Each crawlable route sets its own self-referencing canonical (see
+  // src/lib/seo.ts); authed app routes deliberately emit none.
+  metadataBase: new URL(SITE_ORIGIN),
   title: "Family Subscription Saver | Indian Household Subscription Hub",
   description:
     "A mobile-first subscription management app for Indian families to understand household spending, identify duplicate services, and review legitimate savings opportunities.",

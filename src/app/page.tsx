@@ -4,6 +4,10 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = {
+  alternates: { canonical: "/" },
+};
+
 export default async function Page() {
   // Demo deployments keep the demo dashboard as the homepage.
   if (process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE === "true") {

@@ -1,6 +1,9 @@
 import { LegalPage } from "@/components/LegalPage";
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Refunds and cancellation - Family SubSaver" };
+export const metadata = {
+  title: "Refunds and cancellation - Family SubSaver",
+  alternates: { canonical: "/refunds" },
+};
 export default function Page() {
   return (
     <LegalPage title="Refunds and cancellation" requires={(c) => c.refundDays !== null}>

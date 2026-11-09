@@ -1,6 +1,9 @@
 import { LegalPage } from "@/components/LegalPage";
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Terms - Family SubSaver" };
+export const metadata = {
+  title: "Terms - Family SubSaver",
+  alternates: { canonical: "/terms" },
+};
 export default function Page() {
   return (
     <LegalPage title="Terms of service">
