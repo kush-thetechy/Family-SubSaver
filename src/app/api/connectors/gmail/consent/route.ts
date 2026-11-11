@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     return gmailJson({ error: "Account storage is not configured." }, { status: 503 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
     return gmailJson({ error: "Sign in before consenting to Gmail access." }, { status: 401 });
@@ -48,7 +48,7 @@ export async function DELETE(request: Request) {
     return gmailJson({ error: "Account storage is not configured." }, { status: 503 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
     return gmailJson({ error: "Sign in before changing Gmail consent." }, { status: 401 });

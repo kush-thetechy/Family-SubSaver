@@ -57,7 +57,7 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
     error: authError,
@@ -78,7 +78,7 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const gmailSession = getSessionFromRequestCookies();
+  const gmailSession = await getSessionFromRequestCookies();
   let googleRevocationFailed = false;
   if (gmailSession?.userId === user.id) {
     const token =

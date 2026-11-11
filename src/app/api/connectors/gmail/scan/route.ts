@@ -47,7 +47,7 @@ interface GmailMessageQuota {
 
 async function getSignedInUserId(): Promise<string | null> {
   if (!isSupabaseConfigured) return null;
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getUser();
   if (error) throw error;
   return data.user?.id ?? null;
@@ -70,14 +70,14 @@ async function handleGet() {
       process.env.GOOGLE_CLIENT_SECRET &&
       isSessionEncryptionConfigured()
   );
-  const session = getSessionFromRequestCookies();
+  const session = await getSessionFromRequestCookies();
   const userId = await getSignedInUserId();
   const gmailEnabled = Boolean(userId && isGmailEnabledForUser(userId));
   let consented = false;
   if (userId && gmailEnabled) {
     try {
       consented = await hasCurrentGmailConsent(
-        createSupabaseServerClient(),
+        await createSupabaseServerClient(),
         userId
       );
     } catch (error) {
@@ -119,7 +119,7 @@ async function handleGet() {
   let latestCoverage: GmailScanCoverage | null = null;
   let coverageHistoryAvailable = true;
   if (userId && gmailEnabled && consented) {
-    const { data: row, error: coverageReadError } = await createSupabaseServerClient()
+    const { data: row, error: coverageReadError } = await (await createSupabaseServerClient())
       .from("gmail_scan_coverage")
       .select(
         "id, history_range, window_start, window_end, pages_fetched, messages_matched, unique_messages_selected, messages_attempted, messages_fetched, message_fetch_failures, pagination_complete, truncated, attachments_scanned, lane_coverage, created_at"
@@ -184,7 +184,7 @@ async function handleDelete(request: Request) {
       { status: 403, headers: { "Cache-Control": "no-store" } }
     );
   }
-  const session = getSessionFromRequestCookies();
+  const session = await getSessionFromRequestCookies();
   const userId = await getSignedInUserId();
   if (!userId) {
     const response = gmailJson(
@@ -298,7 +298,7 @@ async function handlePost(request: Request) {
     );
   }
 
-  const session = getSessionFromRequestCookies();
+  const session = await getSessionFromRequestCookies();
   const historyRange = normalizeGmailHistoryRange(body.historyRange);
 
   // 1. Handle the explicit sample-results preview.
@@ -357,7 +357,7 @@ async function handlePost(request: Request) {
       { status: 403, headers: { "Cache-Control": "no-store" } }
     );
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   try {
     if (!(await hasCurrentGmailConsent(supabase, userId))) {
       return gmailJson(
