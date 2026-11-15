@@ -11,7 +11,7 @@ import {
 } from "./gmail-batch";
 import { openScanCursor, sealScanCursor } from "./scan-cursor";
 import { evidenceKey, evidenceProof } from "./import-key";
-import { getGmailHistoryWindow, MAX_GMAIL_SCAN_MESSAGES_PER_DAY } from "./gmail-service";
+import { getGmailHistoryWindow } from "./gmail-service";
 import { clearSessionCookie, setSessionCookie, ServerUserSession } from "./server-token-store";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -109,7 +109,7 @@ export async function handleBatchedScan(a: Args): Promise<NextResponse> {
       return gmailJson(
         {
           success: false,
-          error: `Daily Gmail email-processing limit reached (${MAX_GMAIL_SCAN_MESSAGES_PER_DAY.toLocaleString("en-US")} emails). Try again after ${quota.resets_at}.`,
+          error: "You have scanned a lot of email today. Please try again tomorrow.",
           resetsAt: quota.resets_at,
         },
         { status: 429, headers: NO_STORE }

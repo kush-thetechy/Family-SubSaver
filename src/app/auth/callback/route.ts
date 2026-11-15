@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   const loginUrl = new URL("/login", requestUrl.origin);
   loginUrl.searchParams.set(
     "error",
-    "This link could not be verified. It may have expired, been used already, or been opened in a different browser than the one that requested it. Sign in, or request a new link with Forgot password (open it in the same browser)."
+    "This link has expired or was already used. Request a new one with Forgot password."
   );
   const failed = NextResponse.redirect(loginUrl);
   failed.cookies.set("fss_pw_reset", "", { maxAge: 0, path: "/" });

@@ -145,18 +145,90 @@ export function normalizeComposioMessage(raw: Record<string, unknown>): Record<s
   };
 }
 
+/** Scan token format carried through the existing accessToken slot: composio:<appUserId>:<connectedAccountId>. */
+export function buildComposioScanToken(appUserId: string, connectedAccountId: string): string {
+  return `composio:${appUserId}:${connectedAccountId}`;
+}
+
+export function parseComposioScanToken(
+  token: string
+): { appUserId: string; connectedAccountId: string } | null {
+  const m = /^composio:([^:]+):([^:]+)$/.exec(token);
+  return m ? { appUserId: m[1], connectedAccountId: m[2] } : null;
+}
+
+export function isComposioBulkFetchEnabled(
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  // Off until the live API check confirms ids_only and hydrated pages align.
+  return env.COMPOSIO_BULK_FETCH === "1";
+}
+
+// Hydrated messages from a bulk page, consumed once by the per-message get that follows.
+// Keyed by user+account+id so one user's data can never be served to another.
+// In memory only (never persisted), consumed once, bounded size, and expires after 5 minutes.
+const bulkCache = new Map<string, { value: Record<string, unknown>; expires: number }>();
+const BULK_CACHE_MAX = 2000;
+export const COMPOSIO_BULK_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** Drops every cached message for one app user (called on disconnect/withdraw/delete). */
+export function clearComposioBulkCacheForUser(appUserId: string): void {
+  const prefix = `${appUserId}:`;
+  for (const key of Array.from(bulkCache.keys())) {
+    if (key.startsWith(prefix)) bulkCache.delete(key);
+  }
+}
+
+function cacheKey(t: { appUserId: string; connectedAccountId: string }, id: string): string {
+  return `${t.appUserId}:${t.connectedAccountId}:${id}`;
+}
+
 /**
  * Translate one Gmail REST URL (as used by the scan pipeline) into a Composio tool
  * execution and normalize the response back to the Gmail REST shape, so the rest of
- * the pipeline runs unchanged.
+ * the pipeline runs unchanged. Every call is pinned to the exact connected account
+ * carried in the scan token; a token without one is rejected (fail closed).
  */
 export async function composioGmailRequest<T>(
   url: string,
-  composioUserId: string
+  scanToken: string
 ): Promise<T> {
+  const target = parseComposioScanToken(scanToken);
+  if (!target) {
+    const { GmailApiError } = await import("./gmail-service");
+    throw new GmailApiError("Composio scan token is missing a connected account.", 401);
+  }
+  const composioUserId = target.appUserId;
+  const pin = { connectedAccountId: target.connectedAccountId };
   const parsed = new URL(url);
   const listMatch = /\/gmail\/v1\/users\/me\/messages$/.test(parsed.pathname);
   const getMatch = parsed.pathname.match(/\/gmail\/v1\/users\/me\/messages\/([^/]+)$/);
+
+  if (listMatch && isComposioBulkFetchEnabled()) {
+    const { fetchComposioBulkPage } = await import("./composio-bulk");
+    const page = await fetchComposioBulkPage(
+      (slug, args) => executeComposioTool<Record<string, unknown>>(slug, composioUserId, args, pin),
+      {
+        query: parsed.searchParams.get("q") ?? "",
+        pageToken: parsed.searchParams.get("pageToken") ?? undefined,
+        pageSize: Math.min(100, Number(parsed.searchParams.get("maxResults") ?? "100")),
+      }
+    );
+    for (const m of page.messages) {
+      const id = String((m as { id?: unknown }).id ?? "");
+      if (!id) continue;
+      if (bulkCache.size >= BULK_CACHE_MAX) bulkCache.delete(bulkCache.keys().next().value as string);
+      bulkCache.set(cacheKey(target, id), {
+        value: m,
+        expires: Date.now() + COMPOSIO_BULK_CACHE_TTL_MS,
+      });
+    }
+    // List every id Gmail reported, including unrecoverable ones, so the pipeline's own
+    // per-message fetch fails visibly and raises its incomplete-coverage warning.
+    const cachedIds = page.messages.map((m) => String((m as { id?: unknown }).id));
+    const ids = [...cachedIds, ...page.stats.unrecoverable].map((id) => ({ id }));
+    return { messages: ids, nextPageToken: page.nextPageToken } as T;
+  }
 
   if (listMatch) {
     const args: Record<string, unknown> = {
@@ -170,7 +242,8 @@ export async function composioGmailRequest<T>(
     const data = await executeComposioTool<Record<string, unknown>>(
       COMPOSIO_GMAIL_FETCH_EMAILS,
       composioUserId,
-      args
+      args,
+      pin
     );
     const rawMessages = (data.messages ?? data.results ?? []) as Record<string, unknown>[];
     const messages = rawMessages
@@ -186,10 +259,17 @@ export async function composioGmailRequest<T>(
 
   if (getMatch) {
     const messageId = decodeURIComponent(getMatch[1]);
+    const key = cacheKey(target, messageId);
+    const cached = bulkCache.get(key);
+    if (cached) {
+      bulkCache.delete(key);
+      if (cached.expires > Date.now()) return cached.value as T;
+    }
     const data = await executeComposioTool<Record<string, unknown>>(
       COMPOSIO_GMAIL_FETCH_MESSAGE,
       composioUserId,
-      { message_id: messageId }
+      { message_id: messageId, format: "full" },
+      pin
     );
     const raw = (data && typeof data === "object" && "message" in data
       ? (data.message as Record<string, unknown>)

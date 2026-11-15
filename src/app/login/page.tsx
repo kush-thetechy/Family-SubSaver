@@ -55,15 +55,15 @@ export default function LoginPage({
     setIsSubmitting(true);
     try {
       if (mode === "reset") {
-        // Tell the callback this link is a password recovery (the allow-listed redirect URL has
-        // no query string). The cookie only picks the landing page; it grants nothing.
+        // Kept for links handled by /auth/callback (the older code flow): the cookie only picks the
+        // landing page there; it grants nothing. New emails link to /auth/confirm instead.
         document.cookie = "fss_pw_reset=1; Max-Age=3600; Path=/; SameSite=Lax; Secure";
         const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
           redirectTo: `${window.location.origin}/auth/callback`,
         });
         if (resetError) throw resetError;
         setMessage(
-          "If that email has an account, a password reset link is on its way. It can take a few minutes; check spam too. Email sending is limited to a few messages an hour, so please wait before asking again."
+          "If that email has an account, a reset link is on its way. Check your inbox (and spam)."
         );
         return;
       }

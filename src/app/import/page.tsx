@@ -3,6 +3,7 @@
 import { recordUsageMilestone } from "@/lib/usage-milestone";
 import { planBulkUndo } from "@/lib/bulk-undo";
 import { AlreadyImportedError } from "@/lib/already-imported";
+import { findExistingCopy } from "@/lib/dedupe";
 import { consolidateEvidenceToCandidates } from "@/lib/connectors/gmail-service";
 import { sha256Hex } from "@/lib/family-link";
 import React, { useState, useEffect, useRef, Suspense } from "react";
@@ -115,18 +116,23 @@ function ImportContent() {
   const [gmailResumeCursor, setGmailResumeCursor] = useState<string | null>(null);
   const scanAbortRef = useRef<AbortController | null>(null);
   const scanEvidenceRef = useRef<Map<string, DiscoveryEvidence>>(new Map());
+  // Always the latest list: a scan started right after the page loads must still compare
+  // its results against the subscriptions that finish loading during the scan.
+  const subscriptionsRef = useRef(subscriptions);
+  subscriptionsRef.current = subscriptions;
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailConfigured, setGmailConfigured] = useState(false);
   const [gmailTokenAvailable, setGmailTokenAvailable] = useState(false);
   const [gmailStatusLoaded, setGmailStatusLoaded] = useState(false);
   const [gmailSetupMessage, setGmailSetupMessage] = useState("");
+  // Composio's Google app asks for broader mailbox access than our own read-only client.
+  const [gmailViaComposio, setGmailViaComposio] = useState(false);
   const [gmailEmail, setGmailEmail] = useState<string | null>(null);
   const [gmailConnectionId, setGmailConnectionId] = useState<string | null>(null);
   const [isGmailModalOpen, setIsGmailModalOpen] = useState(false);
   const [modalConsent, setModalConsent] = useState(false);
   const [gmailMessage, setGmailMessage] = useState("");
-  const [selectedHistoryRange, setSelectedHistoryRange] =
-    useState<GmailHistoryRange>("13m");
+  const selectedHistoryRange: GmailHistoryRange = "45d";
   const [gmailCoverage, setGmailCoverage] =
     useState<GmailScanCoverage | null>(null);
   const [gmailCoverageHistoryAvailable, setGmailCoverageHistoryAvailable] =
@@ -173,6 +179,7 @@ function ImportContent() {
           message?: string;
           latestCoverage?: GmailScanCoverage | null;
           coverageHistoryAvailable?: boolean;
+          provider?: "composio" | "google";
         };
       })
       .then((status) => {
@@ -186,6 +193,7 @@ function ImportContent() {
           status.coverageHistoryAvailable !== false
         );
         setGmailSetupMessage(status.message ?? "");
+        setGmailViaComposio(status.provider === "composio");
         if (status.email) setGmailEmail(status.email);
         setGmailConnectionId(status.connectionId ?? null);
       })
@@ -372,7 +380,7 @@ function ImportContent() {
         setIsGmailModalOpen(false);
         setModalConsent(false);
         setGmailMessage(
-          "Updated 13-month Gmail consent saved. Your existing Gmail connection is ready to scan; Google authorization was not repeated."
+          "Gmail consent saved. Your existing Gmail connection is ready to scan; Google authorization was not repeated."
         );
         return;
       }
@@ -433,7 +441,7 @@ function ImportContent() {
 
     const evidenceNow = () => Array.from(scanEvidenceRef.current.values());
     const finalize = async (): Promise<ConsolidatedSubscriptionCandidate[]> => {
-      const built = consolidateEvidenceToCandidates(evidenceNow(), subscriptions);
+      const built = consolidateEvidenceToCandidates(evidenceNow(), subscriptionsRef.current);
       let keys: (string | null)[] | null = null;
       try {
         const res = await fetch("/api/connectors/gmail/import-keys", {
@@ -520,7 +528,7 @@ function ImportContent() {
           scanEvidenceRef.current.set(ev.message_id ?? ev.id, ev);
         }
         checkedTotal = data.progress?.messagesChecked ?? checkedTotal;
-        const interim = consolidateEvidenceToCandidates(evidenceNow(), subscriptions);
+        const interim = consolidateEvidenceToCandidates(evidenceNow(), subscriptionsRef.current);
         setGmailCandidates(interim.map((c) => ({ ...c, import_key: undefined })));
         const openLane = data.progress?.lanes.find((l) => l.status === "not_started")?.label ?? "Finishing";
         setGmailProgress({ checked: checkedTotal, found: interim.length, lane: openLane });
@@ -799,18 +807,33 @@ function ImportContent() {
     const createdSubIds: string[] = [];
     const createdCandidates: ConsolidatedSubscriptionCandidate[] = [];
     let alreadyAdded = 0;
+    // Entries saved in this same pass also count, so two candidates for one subscription add it once.
+    const knownNow = [...subscriptionsRef.current];
     setBulkGmailSaving(true);
     setErrorMessage("");
 
     try {
       for (const candidate of selected) {
+        const amountPaise = rupeesToPaise(candidate.amount_rupees);
+        // Already in the list with the same price and cycle (an earlier scan saved it): skip.
+        if (
+          findExistingCopy(
+            { service_name: candidate.service_name, amount_paise: amountPaise, billing_cycle: candidate.billing_cycle },
+            knownNow,
+            currentProfile.id
+          )
+        ) {
+          alreadyAdded += 1;
+          savedIds.push(candidate.id);
+          continue;
+        }
         try {
         const createdId = await addSubscription({
           import_key: candidate.import_key,
           household_id: household.id,
           service_name: candidate.service_name,
           plan_name: candidate.plan_name,
-          amount_paise: rupeesToPaise(candidate.amount_rupees),
+          amount_paise: amountPaise,
           billing_cycle: candidate.billing_cycle,
           category: candidate.category,
           payer_id: currentProfile.id,
@@ -835,6 +858,21 @@ function ImportContent() {
         });
         createdSubIds.push(createdId);
         createdCandidates.push(candidate);
+        knownNow.push({
+          id: createdId,
+          household_id: household.id,
+          service_name: candidate.service_name,
+          amount_paise: amountPaise,
+          billing_cycle: candidate.billing_cycle,
+          category: candidate.category,
+          payer_id: currentProfile.id,
+          user_ids: [currentProfile.id],
+          is_active: true,
+          visibility: "full_details",
+          source: "import",
+          created_at: "",
+          updated_at: "",
+        });
         } catch (err) {
           // Same import saved earlier (retry or double click): not an error, not a new row.
           if (!(err instanceof AlreadyImportedError)) throw err;
@@ -877,7 +915,7 @@ function ImportContent() {
     setScreenshotSavedCount(savedIds.length);
     setLastBulk(createdSubIds.length ? { ids: createdSubIds, candidates: createdCandidates } : null);
     if (alreadyAdded > 0) {
-      setErrorMessage(`${alreadyAdded} item(s) were already added earlier and were skipped.`);
+      setErrorMessage(`${alreadyAdded} already in your list, so not added again.`);
     }
     setSavedSuccess(true);
   };
@@ -1130,7 +1168,7 @@ function ImportContent() {
                 Connect Gmail for the broadest subscription scan
               </h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-                We search matching subscription, renewal, receipt, payment, membership, and mandate emails within a selected window of up to 13 months. This can find services billed directly to a card as well as store receipts; scan coverage is shown for review.
+                We search your last 45 days of subscription, renewal, receipt, payment, membership, and mandate emails. This finds services billed directly to a card as well as Google Play and Apple receipts; you review everything before it is saved.
               </p>
             </div>
             <button
@@ -1191,7 +1229,7 @@ function ImportContent() {
             </div>
           ) : null}
           {/* Main Visual Dropzone (Screenshot OCR) */}
-          <div className="bg-white dark:bg-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8 text-center transition hover:border-indigo-400 dark:hover:border-indigo-600 shadow-sm relative overflow-hidden group">
+          <div id="screenshots" className="scroll-mt-24 bg-white dark:bg-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-8 text-center transition hover:border-indigo-400 dark:hover:border-indigo-600 shadow-sm relative overflow-hidden group">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-sm group-hover:scale-105 transition-transform duration-200">
               <FileUp className="w-7 h-7" />
             </div>
@@ -1266,7 +1304,7 @@ function ImportContent() {
                   Gmail Subscription Scan
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  A scan you start searches five subscription-related lanes, matching emails from the selected window of up to 13 months, read in batches, each email counted once. A run reads up to 2,000 emails and a whole scan up to 10,000. If a limit is reached the scan tells you coverage is partial and, for the per-run limit, lets you continue; you can stop at any time. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
+                  A scan you start searches five subscription-related lanes, matching emails from the past 45 days, read in batches, each email counted once. A run reads up to 2,000 emails and a whole scan up to 10,000. If a limit is reached the scan tells you coverage is partial and, for the per-run limit, lets you continue; you can stop at any time. Gmail grants read access more broadly than those app-side filters; a matched message may contain unrelated content that is processed transiently for extraction.
                 </p>
               </div>
 
@@ -1283,27 +1321,6 @@ function ImportContent() {
                       "Live Gmail linking needs server settings. You can preview sample results without connecting an inbox."}
                   </p>
                 )}
-                {gmailConnected && (
-                  <div className="space-y-1.5 pb-1">
-                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                      Search timeframe (maximum 13 months):
-                    </label>
-                    <select
-                      value={selectedHistoryRange}
-                      onChange={(e) =>
-                        setSelectedHistoryRange(
-                          e.target.value as GmailHistoryRange
-                        )
-                      }
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200"
-                    >
-                      <option value="30d">Past 30 days</option>
-                      <option value="45d">Past 45 days</option>
-                      <option value="13m">Past 13 months</option>
-                    </select>
-                  </div>
-                )}
-
                 <button
                   type="button"
                   onClick={
@@ -2278,7 +2295,7 @@ function ImportContent() {
                   Connect Gmail for Subscription Discovery
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Read-only keyword search, limited by the app to a maximum of 13 months
+                  We only read: a keyword search of the past 45 days
                 </p>
               </div>
             </div>
@@ -2291,13 +2308,20 @@ function ImportContent() {
               </div>
               <ul className="space-y-2 text-slate-600 dark:text-slate-300 leading-relaxed list-disc pl-4 text-[11px]">
                 <li>
-                  <strong>Read access and app-side limits:</strong> Google grants read-only access to Gmail messages; it does not restrict access to these results. With your updated consent, each scan you start searches up to 13 months across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run and 10,000 per scan, then stops and says coverage is partial. Results are never described as the whole inbox. A match may contain unrelated text.
+                  <strong>Access and app-side limits:</strong>{" "}
+                  {gmailViaComposio
+                    ? "You connect through Composio, a service that relays Gmail requests for us. Google will ask you to give Composio full Gmail access (read, send and delete), which is broader than we need. Our app only ever asks Composio to search and read messages; it never sends, changes or deletes email."
+                    : "Google grants read-only access to Gmail messages; it does not restrict access to these results."}{" "}
+                  With your updated consent, each scan you start searches the past 45 days across five subscription-related search categories, skips spam and trash, and processes matching messages in batches, up to 2,000 per run and 10,000 per scan, then stops and says coverage is partial. Results are never described as the whole inbox. A match may contain unrelated text.
                 </li>
                 <li>
                   <strong>Server processing:</strong> Matched message content is sent to our server for deterministic extraction. We do not intentionally persist raw message bodies; aggregate scan coverage is saved to your account and retained until you delete your account. Withdrawing consent stops future scans but does not delete prior coverage. This does not mean message data never leaves your device or that Google limits the scope to recent messages.
                 </li>
                 <li>
-                  <strong>Manual scans only:</strong> We do not run background scans. The app requests only Gmail read-only scope and does not send, alter, or delete email.
+                  <strong>Manual scans only:</strong> We do not run background scans.{" "}
+                  {gmailViaComposio
+                    ? "Matched messages pass through Composio on their way to our server. You can remove access any time with Disconnect in Settings, or from your Google Account."
+                    : "The app requests only Gmail read-only scope and does not send, alter, or delete email."}
                 </li>
                 <li>
                   <strong>Review and control:</strong> Extracted structured candidates are shown for your review; only confirmed records are saved. Imports are private to your account, and Settings/Import controls separately withdraw consent, disconnect Gmail, and delete Gmail-tagged records.
@@ -2314,7 +2338,9 @@ function ImportContent() {
                 className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
               />
               <span>
-                I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above, including the 13-month search window and aggregate coverage recording.
+                {gmailViaComposio
+                  ? "I understand and consent to connecting Gmail through Composio, to the access Google will show me, and to server-side processing of matched Gmail messages for the subscription discovery described above, including the 45-day search window and aggregate coverage recording."
+                  : "I understand and consent to server-side processing of read-only Gmail message data for the subscription discovery described above, including the 45-day search window and aggregate coverage recording."}
               </span>
             </label>
 

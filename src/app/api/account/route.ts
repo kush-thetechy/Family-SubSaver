@@ -4,6 +4,8 @@ import {
   getSessionFromRequestCookies,
 } from "@/lib/connectors/server-token-store";
 import { isSupabaseConfigured } from "@/lib/supabase";
+import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { revokeComposioAccess } from "@/lib/connectors/composio-revoke";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 interface TokenClaims {
@@ -99,6 +101,27 @@ export async function DELETE(request: Request) {
       } catch {
         googleRevocationFailed = true;
       }
+    }
+  }
+
+  // Revoke Composio access BEFORE deleting: deleting the account cascades our record of the
+  // connected account, which would orphan live access. Abort (nothing deleted) if it fails.
+  if (process.env.COMPOSIO_API_KEY || process.env.GMAIL_PROVIDER === "composio") {
+    let composioOk = false;
+    try {
+      composioOk = (await revokeComposioAccess({ supabase: createSupabaseAdminClient(), userId: user.id })).ok;
+    } catch {
+      composioOk = false;
+    }
+    if (!composioOk) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Your Gmail connection through our Gmail provider could not be removed, so your account was not deleted. Please try again.",
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
     }
   }
 

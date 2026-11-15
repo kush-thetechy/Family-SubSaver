@@ -16,6 +16,7 @@ import {
   paiseToRupees,
 } from "@/lib/calculations";
 import { INDIAN_SUBSCRIPTION_CATALOG } from "@/lib/catalog";
+import { findExtraCopies } from "@/lib/dedupe";
 import {
   Plus,
   Search,
@@ -187,6 +188,42 @@ function SubscriptionsContent() {
     }
   };
 
+  // Identical entries (same service, price and cycle) saved more than once, e.g. by two scans.
+  const extraCopies = useMemo(
+    () => (isDemoMode ? [] : findExtraCopies(subscriptions, currentProfile.id)),
+    [subscriptions, currentProfile.id, isDemoMode]
+  );
+  const [removingCopies, setRemovingCopies] = useState(false);
+  const [copiesMessage, setCopiesMessage] = useState("");
+
+  const handleRemoveExtraCopies = async () => {
+    const names = Array.from(new Set(extraCopies.map((s) => s.service_name))).join(", ");
+    if (
+      !confirm(
+        `Remove ${extraCopies.length} extra cop${extraCopies.length === 1 ? "y" : "ies"} (${names})? The first-saved entry of each stays.`
+      )
+    )
+      return;
+    setRemovingCopies(true);
+    setCopiesMessage("");
+    let removed = 0;
+    try {
+      for (const sub of extraCopies) {
+        await deleteSubscription(sub.id);
+        removed += 1;
+      }
+      setCopiesMessage(`Removed ${removed} duplicate${removed === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setCopiesMessage(
+        `Removed ${removed} of ${extraCopies.length}. ${
+          error instanceof Error ? error.message : "Some duplicates could not be removed."
+        }`
+      );
+    } finally {
+      setRemovingCopies(false);
+    }
+  };
+
   const handleDelete = async (id: string, serviceName: string) => {
     if (!confirm(`Are you sure you want to delete "${serviceName}"?`)) return;
     try {
@@ -304,6 +341,31 @@ function SubscriptionsContent() {
           Add Subscription
         </button>
       </div>
+
+      {extraCopies.length > 0 && (
+        <div
+          role="status"
+          className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <span>
+            {extraCopies.length} subscription{extraCopies.length === 1 ? " appears" : "s appear"} more than once
+            (same service, price and billing cycle).
+          </span>
+          <button
+            type="button"
+            onClick={handleRemoveExtraCopies}
+            disabled={removingCopies}
+            className="shrink-0 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-60"
+          >
+            {removingCopies ? "Removing..." : "Remove extra copies"}
+          </button>
+        </div>
+      )}
+      {copiesMessage && extraCopies.length === 0 && (
+        <p role="status" className="rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+          {copiesMessage}
+        </p>
+      )}
 
       {/* Search and Filters Bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row gap-3">

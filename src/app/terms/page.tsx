@@ -9,7 +9,7 @@ export default function Page() {
           <p>These terms cover use of Family SubSaver, run by {c.operator}. By creating an account you agree to them.</p>
           <ul className="list-disc pl-5">
             <li>The service is a tracker. It lists subscriptions and shows totals. It does not cancel, change or pay any subscription for you.</li>
-            <li>Gmail discovery is optional, read-only and started by you. Results are suggestions that may be incomplete or wrong. Check them before saving.</li>
+            <li>Gmail discovery is optional, only reads email, and is started by you. Results are suggestions that may be incomplete or wrong. Check them before saving.</li>
             <li>You may add only information you are entitled to add. Do not use the service to access anyone else&apos;s mail or data.</li>
             <li>Fee: your first 30 days of use are free, counted from the first time a scan or import shows you your live subscriptions, then a one-time payment of Rs {c.priceRupees}, tax included{c.billingLive ? "" : " (checkout is not open yet and nobody is charged until it is)"}, payable through our payment provider, Dodo Payments, which acts as the seller of record. See Pricing and Refunds.</li>
             <li>You can delete your data and account in Settings at any time.</li>

@@ -82,13 +82,21 @@ export default function SettingsPage() {
       const response = await fetch("/api/connectors/gmail/consent", {
         method: "DELETE",
       });
-      const result = (await response.json()) as { error?: string };
+      const result = (await response.json()) as {
+        error?: string;
+        warning?: string;
+        composioRevocationFailed?: boolean;
+      };
       if (!response.ok) {
         throw new Error(result.error || "Could not withdraw Gmail consent.");
       }
       setActionMessage(
         "Gmail consent was withdrawn. The app will not start new Gmail scans until you consent again. This did not revoke the app's access in your Google Account and did not delete records already imported; use Disconnect Gmail and Delete Gmail-imported records for those."
       );
+      // Surface the truthful provider-revocation warning instead of dropping it.
+      if (result.composioRevocationFailed && result.warning) {
+        setActionError(result.warning);
+      }
     } catch (error) {
       setActionError(
         error instanceof Error

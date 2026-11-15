@@ -7,7 +7,6 @@ import { useApp } from "@/context/AppContext";
 import {
   LayoutDashboard,
   Layers,
-  Sparkles,
   Users,
   Settings,
   ShieldAlert,
@@ -47,12 +46,12 @@ export function Navigation() {
       .catch(() => setReviewCount(0));
   }, [authUser, pathname]);
 
+  // Five tabs: Home, the list, scanning, family, settings. Savings is reached from Home.
   const navLinks = [
-    { href: "/", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/", label: "Home", icon: LayoutDashboard },
     { href: "/subscriptions", label: "Subscriptions", icon: Layers },
-    { href: "/savings", label: "Savings", icon: Sparkles },
-    { href: "/import", label: "Import", icon: FileUp },
-    { href: "/household", label: "Household", icon: Users },
+    { href: "/import", label: "Scan", icon: FileUp },
+    { href: "/household", label: "Family", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

@@ -36,6 +36,8 @@ interface AuditProgress {
 
 interface AppContextType {
   isDemoMode: boolean;
+  /** True once the first account (or demo) load has finished. */
+  isLoaded: boolean;
   authUser: User | null;
   accountError: string;
   isFamilyView: boolean;
@@ -625,6 +627,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider
       value={{
         isDemoMode,
+        isLoaded,
         authUser,
         accountError,
         isFamilyView,
