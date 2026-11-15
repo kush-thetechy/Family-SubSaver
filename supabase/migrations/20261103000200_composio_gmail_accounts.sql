@@ -1,6 +1,6 @@
 -- Composio connected Gmail account per SubSaver user (branch feature/composio-gmail).
--- NOT applied to any database. Apply only after the owner approves the Composio route.
--- Service-role access only: RLS enabled with no policies, so clients cannot read or write.
+-- Applied to production 15 Nov 2026 with owner approval (trial branch feat/composio-trial).
+-- Service-role access only: RLS enabled with no policies, and client roles hold no grants.
 --
 -- linked_*  : the account the user completed connecting; scans use only this.
 -- pending_* : a connect attempt in progress (one-time state, hashed, with expiry).
@@ -17,3 +17,4 @@ create table if not exists public.gmail_composio_accounts (
   updated_at timestamptz not null default now()
 );
 alter table public.gmail_composio_accounts enable row level security;
+revoke all on table public.gmail_composio_accounts from anon, authenticated;
