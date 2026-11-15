@@ -100,9 +100,11 @@ async function handleGet() {
   const configured = Boolean(
     isSupabaseConfigured && hasGoogleConfiguration && gmailEnabled
   );
+  // A Composio session never holds a Google token (Composio keeps it); its own expiry is
+  // what matters, and each scan re-validates the linked account server-side.
   const validSessionToken = Boolean(
-    session?.googleAccessToken &&
-      session.tokenExpiry &&
+    (isComposioGmailProvider() || session?.googleAccessToken) &&
+      session?.tokenExpiry &&
       session.tokenExpiry > Date.now() + 60_000
   );
   const connected = Boolean(

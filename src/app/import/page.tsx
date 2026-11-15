@@ -3,6 +3,7 @@
 import { recordUsageMilestone } from "@/lib/usage-milestone";
 import { planBulkUndo } from "@/lib/bulk-undo";
 import { AlreadyImportedError } from "@/lib/already-imported";
+import { findExistingCopy } from "@/lib/dedupe";
 import { consolidateEvidenceToCandidates } from "@/lib/connectors/gmail-service";
 import { sha256Hex } from "@/lib/family-link";
 import React, { useState, useEffect, useRef, Suspense } from "react";
@@ -115,6 +116,10 @@ function ImportContent() {
   const [gmailResumeCursor, setGmailResumeCursor] = useState<string | null>(null);
   const scanAbortRef = useRef<AbortController | null>(null);
   const scanEvidenceRef = useRef<Map<string, DiscoveryEvidence>>(new Map());
+  // Always the latest list: a scan started right after the page loads must still compare
+  // its results against the subscriptions that finish loading during the scan.
+  const subscriptionsRef = useRef(subscriptions);
+  subscriptionsRef.current = subscriptions;
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailConfigured, setGmailConfigured] = useState(false);
   const [gmailTokenAvailable, setGmailTokenAvailable] = useState(false);
@@ -436,7 +441,7 @@ function ImportContent() {
 
     const evidenceNow = () => Array.from(scanEvidenceRef.current.values());
     const finalize = async (): Promise<ConsolidatedSubscriptionCandidate[]> => {
-      const built = consolidateEvidenceToCandidates(evidenceNow(), subscriptions);
+      const built = consolidateEvidenceToCandidates(evidenceNow(), subscriptionsRef.current);
       let keys: (string | null)[] | null = null;
       try {
         const res = await fetch("/api/connectors/gmail/import-keys", {
@@ -523,7 +528,7 @@ function ImportContent() {
           scanEvidenceRef.current.set(ev.message_id ?? ev.id, ev);
         }
         checkedTotal = data.progress?.messagesChecked ?? checkedTotal;
-        const interim = consolidateEvidenceToCandidates(evidenceNow(), subscriptions);
+        const interim = consolidateEvidenceToCandidates(evidenceNow(), subscriptionsRef.current);
         setGmailCandidates(interim.map((c) => ({ ...c, import_key: undefined })));
         const openLane = data.progress?.lanes.find((l) => l.status === "not_started")?.label ?? "Finishing";
         setGmailProgress({ checked: checkedTotal, found: interim.length, lane: openLane });
@@ -802,18 +807,33 @@ function ImportContent() {
     const createdSubIds: string[] = [];
     const createdCandidates: ConsolidatedSubscriptionCandidate[] = [];
     let alreadyAdded = 0;
+    // Entries saved in this same pass also count, so two candidates for one subscription add it once.
+    const knownNow = [...subscriptionsRef.current];
     setBulkGmailSaving(true);
     setErrorMessage("");
 
     try {
       for (const candidate of selected) {
+        const amountPaise = rupeesToPaise(candidate.amount_rupees);
+        // Already in the list with the same price and cycle (an earlier scan saved it): skip.
+        if (
+          findExistingCopy(
+            { service_name: candidate.service_name, amount_paise: amountPaise, billing_cycle: candidate.billing_cycle },
+            knownNow,
+            currentProfile.id
+          )
+        ) {
+          alreadyAdded += 1;
+          savedIds.push(candidate.id);
+          continue;
+        }
         try {
         const createdId = await addSubscription({
           import_key: candidate.import_key,
           household_id: household.id,
           service_name: candidate.service_name,
           plan_name: candidate.plan_name,
-          amount_paise: rupeesToPaise(candidate.amount_rupees),
+          amount_paise: amountPaise,
           billing_cycle: candidate.billing_cycle,
           category: candidate.category,
           payer_id: currentProfile.id,
@@ -838,6 +858,21 @@ function ImportContent() {
         });
         createdSubIds.push(createdId);
         createdCandidates.push(candidate);
+        knownNow.push({
+          id: createdId,
+          household_id: household.id,
+          service_name: candidate.service_name,
+          amount_paise: amountPaise,
+          billing_cycle: candidate.billing_cycle,
+          category: candidate.category,
+          payer_id: currentProfile.id,
+          user_ids: [currentProfile.id],
+          is_active: true,
+          visibility: "full_details",
+          source: "import",
+          created_at: "",
+          updated_at: "",
+        });
         } catch (err) {
           // Same import saved earlier (retry or double click): not an error, not a new row.
           if (!(err instanceof AlreadyImportedError)) throw err;
@@ -880,7 +915,7 @@ function ImportContent() {
     setScreenshotSavedCount(savedIds.length);
     setLastBulk(createdSubIds.length ? { ids: createdSubIds, candidates: createdCandidates } : null);
     if (alreadyAdded > 0) {
-      setErrorMessage(`${alreadyAdded} item(s) were already added earlier and were skipped.`);
+      setErrorMessage(`${alreadyAdded} already in your list, so not added again.`);
     }
     setSavedSuccess(true);
   };

@@ -1324,11 +1324,13 @@ export function consolidateEvidenceToCandidates(
 
   // Cross-reference with existing subscriptions in the household
   for (const cand of results) {
+    // Normalize both names the same way: an entry saved as "Claude Pro Subscription" must
+    // match a new candidate for the same service.
+    const candKey = normalizeServiceName(cand.service_name).toLowerCase();
     const matchedExisting = existingSubscriptions.filter(
       (sub) =>
         sub.is_active &&
-        normalizeServiceName(sub.service_name).toLowerCase() ===
-          cand.service_name.toLowerCase()
+        normalizeServiceName(sub.service_name).toLowerCase() === candKey
     );
 
     if (matchedExisting.length > 0) {
