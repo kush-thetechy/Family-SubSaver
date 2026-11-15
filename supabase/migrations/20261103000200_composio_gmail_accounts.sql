@@ -18,3 +18,4 @@ create table if not exists public.gmail_composio_accounts (
 );
 alter table public.gmail_composio_accounts enable row level security;
 revoke all on table public.gmail_composio_accounts from anon, authenticated;
+grant select, insert, update, delete on table public.gmail_composio_accounts to service_role;
